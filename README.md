@@ -1,3 +1,5 @@
+> **Not part of Ghost.** This is a copy of Paperclip, open-source orchestration for teams of AI agents, kept for reference. `nextgent-ghost-image/workers/` describes it as an optional worker a Ghost can attach; it is not installed by default.
+
 <p align="center">
   <img src="doc/assets/banner.jpg" alt="Paperclip is the app people use to manage AI agents for work." width="720" />
 </p>
