@@ -8,6 +8,10 @@ import { queryKeys } from "@/lib/queryKeys";
 import { BootstrapPendingPage } from "@/components/BootstrapPendingPage";
 import { PaperclipLoading } from "@/components/AnimatedPaperclipIcon";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { companiesApi } from "@/api/companies";
+import { useState, type FormEvent } from "react";
 
 function NoBoardAccessPage() {
   return (
@@ -21,6 +25,56 @@ function NoBoardAccessPage() {
         <p className="mt-2 text-sm text-muted-foreground">
           Use an organization invite or sign in with an account that already belongs to this org.
         </p>
+      </Card>
+    </div>
+  );
+}
+
+/**
+ * Shown instead of "No organization access" when the server allows self-serve
+ * workspaces: a new sign-up names its organization and lands on its dashboard.
+ */
+function CreateWorkspacePage() {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState("");
+  const createMutation = useMutation({
+    mutationFn: (companyName: string) => companiesApi.create({ name: companyName }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.access.currentBoardAccess });
+    },
+  });
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const trimmed = name.trim();
+    if (trimmed) createMutation.mutate(trimmed);
+  }
+
+  return (
+    <div className="mx-auto max-w-xl py-10">
+      <Card className="block p-6">
+        <h1 className="text-xl font-semibold">Create your workspace</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Name your organization to get started. You will be its owner and can invite others later.
+        </p>
+        <form className="mt-4 flex gap-2" onSubmit={submit}>
+          <Input
+            aria-label="Organization name"
+            placeholder="Organization name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            autoFocus
+          />
+          <Button type="submit" disabled={!name.trim() || createMutation.isPending}>
+            {createMutation.isPending ? "Creating…" : "Create"}
+          </Button>
+        </form>
+        {createMutation.error ? (
+          <p className="mt-2 text-sm text-destructive">
+            {createMutation.error instanceof Error ? createMutation.error.message : "Could not create the workspace."}
+          </p>
+        ) : null}
       </Card>
     </div>
   );
@@ -126,7 +180,7 @@ export function CloudAccessGate({ allowMembershipRequest = false }: { allowMembe
     !boardAccessQuery.data?.isInstanceAdmin &&
     (boardAccessQuery.data?.companyIds.length ?? 0) === 0
   ) {
-    return <NoBoardAccessPage />;
+    return healthQuery.data?.features?.selfServeCompanies ? <CreateWorkspacePage /> : <NoBoardAccessPage />;
   }
 
   return <Outlet />;

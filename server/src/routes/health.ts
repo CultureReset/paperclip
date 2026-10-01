@@ -37,6 +37,7 @@ import {
 import { serverVersion } from "../version.js";
 import { getStartupRecoveryState } from "../startup-recovery-state.js";
 import { nativeRestartRecoverySummary } from "../services/native-runtime/native-restart-recovery.js";
+import { isSelfServeCompanyCreationEnabled } from "../services/self-serve.js";
 import {
   removeHotRestartIntent,
   writeHotRestartIntent,
@@ -422,6 +423,7 @@ export function healthRoutes(
       bootstrapInviteActive,
       features: {
         companyDeletionEnabled: opts.companyDeletionEnabled,
+        selfServeCompanies: opts.deploymentMode === "authenticated" && isSelfServeCompanyCreationEnabled(),
       },
       serverInfo,
       startupRecovery,
