@@ -85,9 +85,11 @@ password, which only you hold).
 Each step is done when it works end to end, not when the service starts.
 
 1. **Foundation** — this directory. Done, pending a host.
-2. **Hermes** — run Hermes with its API server, add it as a `hermes_gateway`
-   agent ("Researcher"). The adapter is built in; see
-   `doc/HERMES_GATEWAY_ONBOARDING.md`. Needs an AI provider key.
+2. **First real worker** — a "Researcher" agent on a built-in runtime
+   (Claude, Codex, OpenCode or Grok) using the one platform AI key in `.env`.
+   No extra service, no extra key. Hermes (`hermes_gateway`, built in, see
+   `doc/HERMES_GATEWAY_ONBOARDING.md`) is optional and can come later; it is a
+   separate server and would hold its own key.
 3. **LiteLLM** — one model gateway; agents ask for `fast` / `reasoning` /
    `coding`, not vendor names.
 4. **Jarvis** — the CEO agent in each workspace, plus a small
