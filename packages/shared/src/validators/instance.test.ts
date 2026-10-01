@@ -106,6 +106,12 @@ describe("instance experimental settings validators", () => {
     expect(settings.enableBuiltInAgents).toBe(false);
   });
 
+  it("defaults persistent agent conversations on", () => {
+    const settings = instanceExperimentalSettingsSchema.parse({});
+
+    expect(settings.enableAgentChat).toBe(true);
+  });
+
   it("defaults beta skills off", () => {
     const settings = instanceExperimentalSettingsSchema.parse({});
 
