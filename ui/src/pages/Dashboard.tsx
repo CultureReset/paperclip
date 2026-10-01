@@ -297,7 +297,7 @@ export function Dashboard() {
       return (
         <EmptyState
           icon={LayoutDashboard}
-          message="Welcome to Paperclip. Set up your first organization and agent to get started."
+          message="Welcome to NEXT GENT. Set up your organization and Jarvis to get started."
           action="Get Started"
           onAction={openOnboarding}
         />
