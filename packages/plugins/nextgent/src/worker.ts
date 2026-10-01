@@ -2,88 +2,118 @@ import {
   definePlugin,
   runWorker,
   type PaperclipPlugin,
-  type PluginContext
+  type PluginContext,
+  type PluginManagedAgentResolution
 } from "@paperclipai/plugin-sdk";
+import { RESEARCH_AGENT_KEY } from "./manifest.js";
 
-type NextGentConfig = {
-  storeBaseUrl?: string;
+type CatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  provisioned: boolean;
+  configured: boolean;
+  status: string;
+  agentId: string | null;
+  setupMessage?: string;
 };
 
-const DEFAULT_STORE_URL = "http://127.0.0.1:7790";
+function requireCompanyId(params: Record<string, unknown>): string {
+  const companyId = typeof params.companyId === "string" ? params.companyId.trim() : "";
+  if (!companyId) throw new Error("companyId is required");
+  return companyId;
+}
 
-async function configFor(ctx: PluginContext, companyId?: string): Promise<Required<NextGentConfig>> {
-  const config = await ctx.config.get(companyId) as NextGentConfig | null;
+function hasHermesApiKey(resolution: PluginManagedAgentResolution): boolean {
+  const value = resolution.agent?.adapterConfig?.apiKey;
+  if (typeof value === "string") return value.trim().length > 0;
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as { type?: unknown }).type === "secret_ref" &&
+    typeof (value as { secretId?: unknown }).secretId === "string"
+  );
+}
+
+function itemFromResolution(resolution: PluginManagedAgentResolution): CatalogItem {
+  const configured = hasHermesApiKey(resolution);
+  const agent = resolution.agent;
   return {
-    storeBaseUrl: (config?.storeBaseUrl || DEFAULT_STORE_URL).replace(/\/$/, "")
+    id: RESEARCH_AGENT_KEY,
+    name: "Research Assistant",
+    description: "Hermes-powered autonomous research employee managed by Paperclip.",
+    enabled: agent?.status === "idle" || agent?.status === "running",
+    provisioned: Boolean(resolution.agentId),
+    configured,
+    status: agent?.status ?? resolution.status,
+    agentId: resolution.agentId,
+    setupMessage: configured
+      ? undefined
+      : "Enter the Hermes API key once in Research Assistant → Configuration. Paperclip stores it as a secret reference."
   };
 }
 
-function companyId(params: Record<string, unknown>): string {
-  const value = typeof params.companyId === "string" ? params.companyId : "";
-  if (!value) throw new Error("companyId is required");
-  return value;
-}
-
-async function storeCall(
-  ctx: PluginContext,
-  currentCompanyId: string,
-  key: string,
-  args: Record<string, unknown> = {}
-): Promise<Record<string, unknown>> {
-  const config = await configFor(ctx, currentCompanyId);
-  const response = await ctx.http.fetch(`${config.storeBaseUrl}/api/capability`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ key, args })
-  });
-  const body = await response.text();
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(body) as Record<string, unknown>;
-  } catch {
-    throw new Error(`NEXT GENT Store returned non-JSON (${response.status}): ${body.slice(0, 300)}`);
-  }
-  if (!response.ok) {
-    throw new Error(
-      typeof parsed.message === "string"
-        ? parsed.message
-        : `NEXT GENT Store returned ${response.status}`
-    );
-  }
-  return parsed;
-}
-
 const plugin: PaperclipPlugin = definePlugin({
-  async setup(ctx) {
+  async setup(ctx: PluginContext) {
     ctx.data.register("catalog", async (params) => {
-      const id = companyId(params);
-      const [store, installed] = await Promise.all([
-        storeCall(ctx, id, "apps.browse"),
-        storeCall(ctx, id, "apps.installed").catch(() => ({ apps: [] }))
-      ]);
-      return { store, installed };
+      const companyId = requireCompanyId(params);
+      const research = await ctx.agents.managed.get(RESEARCH_AGENT_KEY, companyId);
+      return { items: [itemFromResolution(research)] };
     });
 
-    ctx.actions.register("install", async (params) => {
-      const id = companyId(params);
-      const app = typeof params.app === "string" ? params.app : "";
-      if (!app) throw new Error("app is required");
-      return await storeCall(ctx, id, "apps.add", { app });
+    ctx.actions.register("enable", async (params) => {
+      const companyId = requireCompanyId(params);
+      const key = typeof params.id === "string" ? params.id : "";
+      if (key !== RESEARCH_AGENT_KEY) throw new Error("Unknown NEXT GENT capability");
+
+      let resolution = await ctx.agents.managed.reconcile(RESEARCH_AGENT_KEY, companyId);
+      if (!resolution.agentId) {
+        return {
+          ok: false,
+          item: itemFromResolution(resolution),
+          message: resolution.approvalId
+            ? "Paperclip is waiting for the required managed-agent approval."
+            : "Paperclip could not provision the Research Assistant."
+        };
+      }
+
+      if (resolution.agent?.status === "paused") {
+        await ctx.agents.resume(resolution.agentId, companyId);
+        resolution = await ctx.agents.managed.get(RESEARCH_AGENT_KEY, companyId);
+      }
+
+      const item = itemFromResolution(resolution);
+      return {
+        ok: true,
+        item,
+        message: item.configured
+          ? "Research Assistant enabled."
+          : "Research Assistant provisioned. Add the Hermes API key in its Paperclip configuration before assigning work."
+      };
     });
 
-    ctx.actions.register("progress", async (params) => {
-      const id = companyId(params);
-      const jobId = typeof params.jobId === "string" ? params.jobId : "";
-      if (!jobId) throw new Error("jobId is required");
-      return await storeCall(ctx, id, "apps.progress", { jobId });
+    ctx.actions.register("disable", async (params) => {
+      const companyId = requireCompanyId(params);
+      const key = typeof params.id === "string" ? params.id : "";
+      if (key !== RESEARCH_AGENT_KEY) throw new Error("Unknown NEXT GENT capability");
+
+      const resolution = await ctx.agents.managed.get(RESEARCH_AGENT_KEY, companyId);
+      if (resolution.agentId && resolution.agent?.status !== "paused") {
+        await ctx.agents.pause(resolution.agentId, companyId);
+      }
+      const current = await ctx.agents.managed.get(RESEARCH_AGENT_KEY, companyId);
+      return {
+        ok: true,
+        item: itemFromResolution(current),
+        message: "Research Assistant disabled. Paperclip history, tasks, and results were preserved."
+      };
     });
   },
 
   async onHealth() {
-    return {
-      status: "ok",
-      message: "NEXT GENT Paperclip surface ready"
-    };
+    return { status: "ok", message: "NEXT GENT capability catalog ready" };
   }
 });
 
