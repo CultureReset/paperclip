@@ -574,10 +574,9 @@ function OnboardingWizardInner({
   const [companyName, setCompanyName] = useState((saved?.companyName as string) ?? "");
 
   // Step 2
-  // The name is not defaulted: a pre-filled "Chief of staff" is a choice made
-  // on the customer's behalf that they then have to notice and undo. It is the
-  // step's only question, and its CTA gates on it.
-  const [agentName, setAgentName] = useState((saved?.agentName as string) ?? "");
+  // NEXT GENT has one stable front door. Customers can still rename the agent,
+  // but a fresh organization works as Jarvis without another naming decision.
+  const [agentName, setAgentName] = useState((saved?.agentName as string) ?? "Jarvis");
   const [agentAppearance, setAgentAppearance] = useState(() => agentAppearanceSchema.safeParse(saved?.agentAppearance).data ?? randomAgentAppearance());
   // Defaults to `general` rather than empty. The arc stopped asking for a role
   // — a customer naming their first agent is describing what it does, not
@@ -2643,7 +2642,7 @@ function OnboardingWizardInner({
                     <Input
                       id="onboarding-agent-name"
                       className="h-(--sz-44px) rounded-lg border-transparent bg-muted shadow-none dark:bg-muted"
-                      placeholder="e.g. Chief of staff"
+                      placeholder="Jarvis"
                       value={agentName}
                       onChange={(e) => setAgentName(e.target.value)}
                       onKeyDown={(e) => {

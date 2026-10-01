@@ -24,6 +24,7 @@ import { OnboardingWizardVariant } from "./components/OnboardingWizardVariant";
 import { CloudAccessGate } from "./components/CloudAccessGate";
 import { PaperclipLoading } from "./components/AnimatedPaperclipIcon";
 import { Dashboard } from "./pages/Dashboard";
+import { Jarvis } from "./pages/Jarvis";
 import { DashboardLive } from "./pages/DashboardLive";
 import { Timeline } from "./pages/Timeline";
 import { Companies } from "./pages/Companies";
@@ -147,6 +148,7 @@ function boardRoutes(streamlinedUiEnabled: boolean) {
   return (
     <>
       <Route index element={<Navigate to="dashboard" replace />} />
+      <Route path="jarvis" element={<Jarvis />} />
       <Route path="dashboard" element={<Dashboard />} />
       <Route path="dashboard/live" element={<DashboardLive />} />
       <Route
