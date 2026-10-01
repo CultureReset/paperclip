@@ -42,6 +42,18 @@ docker compose up -d --build
 
 Then put HTTPS in front of port 3100 and point your domain at it.
 
+**Make yourself the owner (once).** A new install has no platform owner until
+someone claims it. Sign up in the browser first, then on the server:
+
+```bash
+docker compose exec -w /app server \
+  node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts auth bootstrap-ceo
+```
+
+It prints a one-time link (valid 72 hours). Open it while signed in and that
+account becomes the instance admin. Do this before you share the URL: until an
+owner exists, anyone who signs up could claim it.
+
 It cannot run on Vercel. The server is a long-running process: it schedules
 agents on timers, starts them as child processes, streams live updates over
 WebSockets and keeps run logs on disk. Serverless functions do none of that.
@@ -57,10 +69,16 @@ Run on 2026-10-01 against an empty Postgres with these exact settings:
   workspace got 403 every time; no session got 403;
 - in single-user mode, a task assigned to an agent started the agent, the
   agent finished it and wrote its result back, and companies, agents, tasks,
-  comments and run history all survived server restarts.
+  comments and run history all survived server restarts;
+- the production Docker image built, started against an empty database,
+  applied all 283 migrations, served the dashboard, and repeated the two-account
+  sign-up and isolation result above;
+- the owner command above, run inside that container, made the signed-in
+  account `instance_admin` and moved the install from `bootstrap_pending` to
+  `ready`.
 
-Not yet verified: the Docker image build itself and a connection to the real
-Saas database (that needs its password, which only you hold).
+Not yet verified: a connection to the real Saas database (that needs its
+password, which only you hold).
 
 ## Build order from here
 

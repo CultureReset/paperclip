@@ -61,12 +61,16 @@ export async function bootstrapCeoInvite(opts: {
   const configPath = resolveConfigPath(opts.config);
   loadPaperclipEnvFile(configPath);
   const config = readConfig(configPath);
-  if (!config) {
+  // Container deployments are configured entirely through the environment and
+  // never run `onboard`, so there is no config file. DATABASE_URL plus the
+  // deployment mode is everything this command needs.
+  if (!config && !process.env.DATABASE_URL) {
     p.log.error(`No config found at ${configPath}. Run ${pc.cyan("paperclip onboard")} first.`);
     return;
   }
 
-  if (config.server.deploymentMode !== "authenticated") {
+  const deploymentMode = config?.server.deploymentMode ?? process.env.PAPERCLIP_DEPLOYMENT_MODE;
+  if (deploymentMode !== "authenticated") {
     p.log.info("Deployment mode is local_trusted. Bootstrap CEO invite is only required for authenticated mode.");
     return;
   }
