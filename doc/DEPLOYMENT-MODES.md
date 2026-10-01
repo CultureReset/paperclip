@@ -201,3 +201,18 @@ future public-hosted setup design explicitly changes this policy.
 - V1 contract: `doc/SPEC-implementation.md`
 - operator workflows: `doc/DEVELOPING.md` and `doc/CLI.md`
 - invite/join state map: `doc/spec/invite-flow.md`
+
+## 9. Self-Serve Workspaces (SaaS sign-up)
+
+Set `PAPERCLIP_SELF_SERVE_COMPANIES=true` on an `authenticated` deployment to let
+anyone who signs up create their own organization:
+
+1. a new account signs up at `/auth`
+2. instead of "No organization access" it sees **Create your workspace**
+3. it names its organization, becomes that organization's owner, and lands on
+   its own empty dashboard
+
+Each account sees only the organizations it is a member of. Only browser
+session users may self-serve; board API keys and agents may not. The flag is
+ignored on Paperclip Cloud-managed instances. Off by default. Set
+`PAPERCLIP_AUTH_DISABLE_SIGN_UP=true` to close sign-ups again.
