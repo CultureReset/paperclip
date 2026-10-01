@@ -73,9 +73,23 @@ const plugin: PaperclipPlugin = definePlugin({
         return {
           ok: false,
           item: itemFromResolution(resolution),
-          message: resolution.approvalId
-            ? "Paperclip is waiting for the required managed-agent approval."
-            : "Paperclip could not provision the Research Assistant."
+          message: "Paperclip could not provision the Research Assistant."
+        };
+      }
+
+      if (resolution.agent?.status === "pending_approval" || resolution.approvalId) {
+        return {
+          ok: false,
+          item: itemFromResolution(resolution),
+          message: "Paperclip is waiting for the managed-agent hire approval."
+        };
+      }
+
+      if (!hasHermesApiKey(resolution)) {
+        return {
+          ok: true,
+          item: itemFromResolution(resolution),
+          message: "Research Assistant provisioned and kept paused. Add the Hermes API key in its Paperclip configuration, then Enable it again."
         };
       }
 
@@ -88,9 +102,7 @@ const plugin: PaperclipPlugin = definePlugin({
       return {
         ok: true,
         item,
-        message: item.configured
-          ? "Research Assistant enabled."
-          : "Research Assistant provisioned. Add the Hermes API key in its Paperclip configuration before assigning work."
+        message: "Research Assistant enabled."
       };
     });
 
