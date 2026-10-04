@@ -66,6 +66,7 @@ import {
 } from "../services/index.js";
 import { isCloudManagedInstance } from "../services/cloud-instance.js";
 import { isSelfServeCompanyCreationEnabled } from "../services/self-serve.js";
+import { nextgentCompanySetup, shouldRunNextgentAccountSetup } from "../services/nextgent-company-setup.js";
 import { getHiddenSettings } from "../services/settings-visibility.js";
 import type { StorageService } from "../storage/types.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo, hasCompanyAccess } from "./authz.js";
@@ -1226,6 +1227,11 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       entityId: company.id,
       details: { name: company.name },
     });
+    // NEXT GENT account setup (plan §6): the company's LiteLLM key and its
+    // assistant. Never throws; a failed step is logged and the sign-up stands.
+    if (shouldRunNextgentAccountSetup(selfServe)) {
+      await nextgentCompanySetup(db).runAccountSetup(company.id, req.actor.userId ?? null);
+    }
     if (company.budgetMonthlyCents > 0) {
       await budgets.upsertPolicy(
         company.id,

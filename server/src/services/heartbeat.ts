@@ -15,6 +15,7 @@ import { hasRemoteTerminationReceipt, remoteExecutionHasStopped, remoteTerminati
 import { applyConnectorSkills, prepareConnectorSkillDelivery, resolveConnectorAssignments } from "./connector-runtime.js";
 import { admitExplicitNativeContinuation, undeliveredLegacyUserCommentIds } from "./explicit-native-continuation.js";
 import { connectionIntentService } from "./connection-intents.js";
+import { applyModelGatewayEnv, companyModelGatewayEnv, MODEL_GATEWAY_ENV_KEYS } from "./nextgent-model-gateway.js";
 import { managedAiSessionFingerprintConfig, prepareManagedAiRuntime, assertManagedAiProjectAuth, stripAiAuthBindings, isAiConnectionBusy, AI_AUTH_ENV_KEYS } from "./ai-connection-runtime.js";
 import { aiConnectionBindingSchema } from "@paperclipai/shared";
 import { executionBlockerPredicate, getExecutionBlocker } from "./execution-blocker.js";
@@ -21281,6 +21282,15 @@ export function heartbeatService(
           secretsSvc,
           trustPreset,
         });
+      if (!aiBinding) {
+        // NEXT GENT: the company's own LiteLLM key replaces the server-wide AI
+        // key when it has one (contract §8). Explicit run settings still win.
+        const gatewayEnv = await companyModelGatewayEnv(db, agent.companyId);
+        if (gatewayEnv) {
+          resolvedConfig.env = applyModelGatewayEnv(parseObject(resolvedConfig.env), gatewayEnv);
+          for (const key of MODEL_GATEWAY_ENV_KEYS) secretKeys.add(key);
+        }
+      }
       if (aiBinding) {
         try {
           managedAiRuntime = await prepareManagedAiRuntime(db, { companyId: agent.companyId, agentId: agent.id, responsibleUserId, adapterType: agent.adapterType, binding: aiBinding, config: resolvedConfig });
