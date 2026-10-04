@@ -85,6 +85,14 @@ export const storeInstalls = pgTable(
     /** "automatic" takes new releases as they ship; "manual" stays put until the company updates. */
     approvalMode: text("approval_mode").notNull().default("automatic"),
     installedByUserId: text("installed_by_user_id"),
+    /**
+     * Data permissions (resource:action) the owner approved for this install.
+     * A release that asks for anything outside this list waits for approval
+     * instead of applying automatically. Null when the item declares none.
+     */
+    approvedPermissions: jsonb("approved_permissions").$type<string[]>(),
+    /** Company secret holding the token gcr-api-clean issued for this install. */
+    tokenSecretId: uuid("token_secret_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
