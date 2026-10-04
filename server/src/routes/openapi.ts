@@ -1284,6 +1284,9 @@ const RUNTIME_TOOLS_OPERATIONS = new Set([
 ]);
 
 const PUBLIC_OPERATIONS = new Set([
+  "GET /.well-known/jwks.json",
+  "POST /api/nextgent/receipts",
+  "POST /api/nextgent/conversations",
   "GET /api/agent-avatars/{version}/{palette}/{file}",
   "GET /api/health",
   "GET /api/openapi.json",
@@ -1315,6 +1318,17 @@ const BOARD_ONLY_PREFIXES = [
 ];
 
 const BOARD_ONLY_OPERATIONS = new Set([
+  "POST /api/companies/{companyId}/store/{itemId}/install",
+  "POST /api/companies/{companyId}/store/{itemId}/enable",
+  "PATCH /api/companies/{companyId}/store/{itemId}",
+  "POST /api/companies/{companyId}/store/{itemId}/update",
+  "DELETE /api/companies/{companyId}/store/{itemId}",
+  "POST /api/companies/{companyId}/business-token",
+  "POST /api/companies/{companyId}/installs/{installId}/token",
+  "GET /api/companies/{companyId}/receipts",
+  "GET /api/companies/{companyId}/business-link",
+  "POST /api/companies/{companyId}/business-link",
+  "DELETE /api/companies/{companyId}/business-link",
   "GET /api/companies/{companyId}/ai-connections",
   "POST /api/companies/{companyId}/ai-connections",
   "POST /api/companies/{companyId}/ai-connections/local",
@@ -1537,6 +1551,21 @@ const BOARD_ONLY_OPERATIONS = new Set([
 ]);
 
 const INSTANCE_ADMIN_OPERATIONS = new Set([
+  "GET /api/store/admin/items",
+  "POST /api/store/admin/items",
+  "PATCH /api/store/admin/items/{itemId}",
+  "POST /api/store/admin/items/{itemId}/versions",
+  "POST /api/store/admin/items/{itemId}/publish",
+  "POST /api/store/admin/items/{itemId}/retire",
+  "GET /api/store/admin/meta",
+  "GET /api/store/admin/items/{itemId}/installs",
+  "POST /api/store/admin/items/{itemId}/deploy/preview",
+  "POST /api/store/admin/items/{itemId}/deploy",
+  "GET /api/store/admin/deployments",
+  "PUT /api/store/admin/items/{itemId}/price",
+  "GET /api/store/admin/menu",
+  "PUT /api/store/admin/menu",
+  "POST /api/admin/business-token",
   "POST /api/companies",
   "POST /api/plugins/install",
   "POST /api/instance/database-backups",
@@ -11446,3 +11475,37 @@ registerCurrentRoute({
   body: localAiConnectionSchema,
   responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 422: r.unprocessable },
 });
+
+// ─── NEXT GENT: store and business wiring (docs/api/nextgent.md) ─────────────
+registerCurrentRoute({ method: "get", path: "/api/store/admin/items", tags: ["store"], summary: "List every store item with versions, installs and price" });
+registerCurrentRoute({ method: "post", path: "/api/store/admin/items", tags: ["store"], summary: "Create a store item" });
+registerCurrentRoute({ method: "patch", path: "/api/store/admin/items/{itemId}", tags: ["store"], summary: "Update a store item" });
+registerCurrentRoute({ method: "post", path: "/api/store/admin/items/{itemId}/versions", tags: ["store"], summary: "Release a version of a store item" });
+registerCurrentRoute({ method: "post", path: "/api/store/admin/items/{itemId}/publish", tags: ["store"], summary: "Publish a store item" });
+registerCurrentRoute({ method: "post", path: "/api/store/admin/items/{itemId}/retire", tags: ["store"], summary: "Retire a store item" });
+registerCurrentRoute({ method: "get", path: "/api/store/admin/meta", tags: ["store"], summary: "Store vocabulary for the admin console" });
+registerCurrentRoute({ method: "get", path: "/api/store/admin/items/{itemId}/installs", tags: ["store"], summary: "Companies that have a store item" });
+registerCurrentRoute({ method: "post", path: "/api/store/admin/items/{itemId}/deploy/preview", tags: ["store"], summary: "Preview pushing a release to an audience" });
+registerCurrentRoute({ method: "post", path: "/api/store/admin/items/{itemId}/deploy", tags: ["store"], summary: "Push a release to an audience" });
+registerCurrentRoute({ method: "get", path: "/api/store/admin/deployments", tags: ["store"], summary: "Store pushes, newest first" });
+registerCurrentRoute({ method: "put", path: "/api/store/admin/items/{itemId}/price", tags: ["store"], summary: "Set a store item's price (forwarded to billing)" });
+registerCurrentRoute({ method: "get", path: "/api/store/admin/menu", tags: ["store"], summary: "Core menu settings" });
+registerCurrentRoute({ method: "put", path: "/api/store/admin/menu", tags: ["store"], summary: "Set the core menu" });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/menu", tags: ["nextgent"], summary: "Menu entries visible in a company" });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/store", tags: ["store"], summary: "Store items for a company" });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/store/{itemId}/install", tags: ["store"], summary: "Install a store item" });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/store/{itemId}/enable", tags: ["store"], summary: "Turn on an install pushed switched off" });
+registerCurrentRoute({ method: "patch", path: "/api/companies/{companyId}/store/{itemId}", tags: ["store"], summary: "Change an install's channel or update mode" });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/store/{itemId}/consent", tags: ["store"], summary: "What installing a store item needs and costs" });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/store/{itemId}/update", tags: ["store"], summary: "Update an install (approving new permissions)" });
+registerCurrentRoute({ method: "delete", path: "/api/companies/{companyId}/store/{itemId}", tags: ["store"], summary: "Uninstall a store item" });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/business-token", tags: ["nextgent"], summary: "Short-lived business token for screens" });
+registerCurrentRoute({ method: "post", path: "/api/admin/business-token", tags: ["nextgent"], summary: "Instance-admin business token with no company" });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/installs/{installId}/token", tags: ["nextgent"], summary: "An installed app's business-data token" });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/receipts", tags: ["nextgent"], summary: "Receipts for real-world actions" });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/business-link", tags: ["nextgent"], summary: "The company's business link" });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/business-link", tags: ["nextgent"], summary: "Link the company to its business" });
+registerCurrentRoute({ method: "delete", path: "/api/companies/{companyId}/business-link", tags: ["nextgent"], summary: "Unlink the company from its business" });
+registerCurrentRoute({ method: "get", path: "/.well-known/jwks.json", tags: ["nextgent"], summary: "Business-token verification keys" });
+registerCurrentRoute({ method: "post", path: "/api/nextgent/receipts", tags: ["nextgent"], summary: "Record a receipt (signed by gcr-api-clean)" });
+registerCurrentRoute({ method: "post", path: "/api/nextgent/conversations", tags: ["nextgent"], summary: "Record a call or text conversation (signed by gcr-api-clean)" });

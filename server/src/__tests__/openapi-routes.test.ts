@@ -73,6 +73,8 @@ const apiPrefixes: Record<string, string> = {
   "tool-access.ts": "/api",
   "tool-gateway.ts": "/api",
   "user-profiles.ts": "/api",
+  "store.ts": "/api",
+  "nextgent.ts": "/api",
 };
 
 const ROUTE_LITERAL_PATTERN =
@@ -135,6 +137,10 @@ function resolveMountedPath(file: string, prefix: string, routePath: string) {
     (file === "chat-channels.ts" || file === "email.ts") &&
     routePath.startsWith("/api/chat-webhooks/")
   ) {
+    return routePath;
+  }
+  // NEXT GENT's public routes are mounted at the app root (JWKS, signed inbound calls).
+  if (file === "nextgent.ts" && (routePath.startsWith("/api/") || routePath.startsWith("/.well-known/"))) {
     return routePath;
   }
   if (file === "tool-gateway.ts" && routePath.startsWith("/mcp/gateways/")) {
