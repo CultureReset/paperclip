@@ -705,6 +705,10 @@ export const queryKeys = {
   skills: {
     available: ["skills", "available"] as const,
   },
+  store: {
+    admin: ["store", "admin"] as const,
+    company: (companyId: string) => ["store", "company", companyId] as const,
+  },
   plugins: {
     all: ["plugins"] as const,
     examples: ["plugins", "examples"] as const,

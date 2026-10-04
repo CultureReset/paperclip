@@ -12,6 +12,7 @@ import {
   Upload,
   UserRoundPen,
   Users,
+  Store as StoreIcon,
 } from "lucide-react";
 import type { PluginRecord } from "@paperclipai/shared";
 import { sidebarBadgesApi } from "@/api/sidebarBadges";
@@ -168,6 +169,13 @@ export function CompanySettingsSidebar() {
               to={`${INSTANCE_SETTINGS_PATH_PREFIX}/plugins`}
               label="Plugins"
               icon={Puzzle}
+            />
+          )}
+          {showPlugins && (
+            <SidebarNavItem
+              to={`${INSTANCE_SETTINGS_PATH_PREFIX}/store`}
+              label="Store publishing"
+              icon={StoreIcon}
             />
           )}
           {showPlugins && sidebarPlugins.length > 0 ? (
