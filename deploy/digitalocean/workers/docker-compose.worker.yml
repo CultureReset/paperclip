@@ -1,0 +1,109 @@
+# One business's workers: a Hermes gateway, and (profile "openclaw") an
+# OpenClaw gateway. Start one project per business on a worker host:
+#
+#   docker compose -p worker-<id> --env-file businesses/<id>.env \
+#     -f docker-compose.worker.yml up -d --build
+#   docker compose -p worker-<id> --env-file businesses/<id>.env \
+#     -f docker-compose.worker.yml --profile openclaw up -d     # with OpenClaw
+#
+# The same file serves both choices in decision 2: many projects on a shared
+# worker host (container per business), or one project on its own Droplet
+# (Droplet per business). See WORKERS.md.
+#
+# The Hermes image is the repo's pinned Hermes gateway image
+# (docker/hermes-gateway-smoke), reused rather than copied. OpenClaw is built
+# from its upstream repository at a pinned ref (WORKERS.md).
+#
+# Nothing is published on the host. Each business gets its own network,
+# nextgent-worker-<id>; the worker host's Caddy (docker-compose.edge.yml) is
+# attached to it so Paperclip reaches the gateways over HTTPS, and one
+# business's containers cannot reach another's.
+
+name: worker-${WORKER_ID:?set WORKER_ID in the business env file}
+
+x-worker: &worker
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: ${WORKER_PIDS_LIMIT:?set WORKER_PIDS_LIMIT}
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  hermes:
+    <<: *worker
+    image: ${HERMES_IMAGE:?set HERMES_IMAGE}
+    build:
+      context: ../../../docker/hermes-gateway-smoke
+      args:
+        HERMES_VERSION: ${HERMES_VERSION:?set HERMES_VERSION}
+    environment:
+      # Paperclip -> Hermes: the gateway key. Paperclip stores the same value
+      # as the agent's apiKey (doc/HERMES_GATEWAY_ONBOARDING.md).
+      API_SERVER_KEY: ${HERMES_API_SERVER_KEY:?set HERMES_API_SERVER_KEY}
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: ${HERMES_PORT:?set HERMES_PORT}
+      # Models only through LiteLLM, with THIS company's key (never a
+      # provider key). See WORKERS.md for confirming Hermes reads these.
+      OPENAI_BASE_URL: ${WORKER_LLM_BASE_URL:?set WORKER_LLM_BASE_URL}
+      OPENAI_API_KEY: ${WORKER_LLM_KEY:?set WORKER_LLM_KEY}
+    volumes:
+      - hermes-home:/home/hermes/.hermes
+      - hermes-workspace:/home/hermes/workspace
+    mem_limit: ${HERMES_MEM_LIMIT:?set HERMES_MEM_LIMIT}
+    cpus: ${HERMES_CPUS:?set HERMES_CPUS}
+    networks:
+      edge:
+        aliases:
+          - ${WORKER_ID}-hermes
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/$${API_SERVER_PORT}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  openclaw:
+    <<: *worker
+    profiles: ["openclaw"]
+    image: ${OPENCLAW_IMAGE:?set OPENCLAW_IMAGE}
+    # The gateway command for your pinned OpenClaw ref, copied from that
+    # ref's own docker-compose.yml (openclaw-gateway service).
+    command: ${OPENCLAW_GATEWAY_COMMAND:?set OPENCLAW_GATEWAY_COMMAND}
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?set OPENCLAW_GATEWAY_TOKEN}
+      OPENCLAW_PORT: ${OPENCLAW_PORT:?set OPENCLAW_PORT}
+      OPENAI_BASE_URL: ${WORKER_LLM_BASE_URL:?set WORKER_LLM_BASE_URL}
+      OPENAI_API_KEY: ${WORKER_LLM_KEY:?set WORKER_LLM_KEY}
+    volumes:
+      # openclaw.json (from openclaw.json.example), identity, credentials, workspace.
+      - openclaw-state:/home/node/.openclaw
+    tmpfs:
+      - /tmp:exec,size=512M
+    mem_limit: ${OPENCLAW_MEM_LIMIT:?set OPENCLAW_MEM_LIMIT}
+    cpus: ${OPENCLAW_CPUS:?set OPENCLAW_CPUS}
+    networks:
+      edge:
+        aliases:
+          - ${WORKER_ID}-openclaw
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(Number(process.env.OPENCLAW_PORT),'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+networks:
+  edge:
+    name: nextgent-worker-${WORKER_ID}
+
+volumes:
+  hermes-home:
+  hermes-workspace:
+  openclaw-state:

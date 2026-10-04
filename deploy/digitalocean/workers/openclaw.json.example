@@ -1,0 +1,27 @@
+{
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "bind": "lan",
+    "auth": {
+      "mode": "token",
+      "token": "<OPENCLAW_GATEWAY_TOKEN from businesses/<id>.env>"
+    },
+    "controlUi": {
+      "enabled": false,
+      "dangerouslyDisableDeviceAuth": false
+    }
+  },
+  "env": {
+    "OPENAI_BASE_URL": "<WORKER_LLM_BASE_URL>",
+    "OPENAI_API_KEY": "<WORKER_LLM_KEY: this company's LiteLLM key>"
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "<LiteLLM tier as OpenClaw names an OpenAI-compatible model, e.g. openai/<tier>>"
+      },
+      "workspace": "/home/node/.openclaw/workspace"
+    }
+  }
+}

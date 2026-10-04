@@ -1,0 +1,11 @@
+# Worker host Caddy. One file per business under sites/ (site.caddy.example).
+{
+	email {$ACME_EMAIL}
+}
+
+(paperclip_only) {
+	@notPaperclip not remote_ip {$PAPERCLIP_EGRESS_CIDRS}
+	respond @notPaperclip 403
+}
+
+import /etc/caddy/sites/*.caddy

@@ -1,0 +1,237 @@
+# NEXT GENT — the always-on DigitalOcean Droplet.
+#
+# Extends the foundation stack in ../../nextgent/docker-compose.yml (the
+# Paperclip server) instead of redefining it, and adds what production needs
+# around it:
+#
+#   caddy       automatic HTTPS for every domain; the only published ports
+#   paperclip   Paperclip (dashboard, API, agents). Database = Supabase "Saas"
+#               through DATABASE_URL in env/paperclip.env, not a container.
+#               Migrations do NOT run on start here; see the release profile.
+#   litellm     the model gateway; tiers from env, one key per company.
+#               Private to this Droplet unless you choose the public-API
+#               option (caddy-sites/litellm-public.caddy.example)
+#   gcr-api     gcr-api-clean in always-on mode (ALWAYS_ON=true): Telnyx live
+#               calls and texts, the computer relay, email intake, and the
+#               in-process scheduler (lib/scheduler.js)
+#
+# Profiles (off unless named):
+#   release     paperclip-migrate: apply Paperclip's database migrations once
+#               per release, before `up`        (STEPS.md, "Releasing")
+#   gcr-crons   cron: the four vercel.json crons the scheduler does not cover,
+#               only when ALL of gcr-api-clean runs here (decision 5, option A)
+#
+# Usage (from this folder):
+#   docker compose config                              # check the settings
+#   docker compose --profile release run --rm paperclip-migrate
+#   docker compose up -d --build                       # add --profile gcr-crons for option A
+#
+# Every host, domain, size and image comes from .env (see .env.example);
+# per-service secrets come from env/*.env. Nothing here holds a value.
+
+name: nextgent
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  caddy:
+    <<: *hardening
+    image: ${CADDY_IMAGE:?set CADDY_IMAGE in .env}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      PAPERCLIP_DOMAIN: ${PAPERCLIP_DOMAIN:?set PAPERCLIP_DOMAIN in .env}
+      GCR_API_DOMAIN: ${GCR_API_DOMAIN:?set GCR_API_DOMAIN in .env}
+      GCR_API_PORT: ${GCR_API_PORT:?set GCR_API_PORT in .env}
+      LITELLM_PORT: ${LITELLM_PORT:?set LITELLM_PORT in .env}
+      # Only read by caddy-sites/litellm-public.caddy, if you choose that option.
+      LITELLM_DOMAIN: ${LITELLM_DOMAIN:-}
+      LITELLM_ADMIN_CIDRS: ${LITELLM_ADMIN_CIDRS:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-sites:/etc/caddy/sites:ro
+      - caddy-data:/data        # certificates: keep across redeploys
+      - caddy-config:/config
+    mem_limit: ${CADDY_MEM_LIMIT:?set CADDY_MEM_LIMIT in .env}
+    healthcheck:
+      # Caddy's admin API answers on localhost inside the container only.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      paperclip:
+        condition: service_started
+      gcr-api:
+        condition: service_started
+      litellm:
+        condition: service_started
+
+  paperclip:
+    extends:
+      file: ../../nextgent/docker-compose.yml
+      service: server
+    <<: *hardening
+    image: ${PAPERCLIP_IMAGE:?set PAPERCLIP_IMAGE in .env}
+    restart: unless-stopped
+    # Reached only through Caddy; publish nothing on the host.
+    ports: !reset []
+    env_file: !override
+      - path: env/paperclip.env
+        required: true
+    environment:
+      # Migrations once per release (profile "release"), not by every start:
+      # with these two the server refuses to start on a stale schema instead
+      # of changing it (server/src/index.ts ensureMigrations).
+      PAPERCLIP_MIGRATION_AUTO_APPLY: "false"
+      PAPERCLIP_MIGRATION_PROMPT: "never"
+      PAPERCLIP_PUBLIC_URL: https://${PAPERCLIP_DOMAIN}
+      TRUST_PROXY: ${PAPERCLIP_TRUST_PROXY:?set PAPERCLIP_TRUST_PROXY in .env}
+      # Shared values, set once in .env.
+      NEXTGENT_SERVICE_SECRET: ${NEXTGENT_SERVICE_SECRET:?set NEXTGENT_SERVICE_SECRET in .env}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      LITELLM_URL: http://litellm:${LITELLM_PORT}
+      GCR_API_URL: https://${GCR_API_DOMAIN}
+    mem_limit: ${PAPERCLIP_MEM_LIMIT:?set PAPERCLIP_MEM_LIMIT in .env}
+    cpus: ${PAPERCLIP_CPUS:?set PAPERCLIP_CPUS in .env}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:3100/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    depends_on:
+      litellm:
+        condition: service_started
+
+  # One-shot: apply pending Paperclip migrations to the Saas database, then exit.
+  # Run once per release, before `up` (STEPS.md). Same image, same env.
+  paperclip-migrate:
+    extends:
+      service: paperclip
+    profiles: ["release"]
+    restart: "no"
+    working_dir: /app/packages/db
+    command: ["node", "node_modules/tsx/dist/cli.mjs", "src/migrate.ts"]
+    healthcheck:
+      disable: true
+    depends_on: !reset []
+
+  litellm:
+    <<: *hardening
+    image: ${LITELLM_IMAGE:?set LITELLM_IMAGE in .env}
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "${LITELLM_PORT}"]
+    env_file:
+      - path: env/litellm.env
+        required: true
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    mem_limit: ${LITELLM_MEM_LIMIT:?set LITELLM_MEM_LIMIT in .env}
+    cpus: ${LITELLM_CPUS:?set LITELLM_CPUS in .env}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ['LITELLM_PORT'] + '/health/liveliness', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  gcr-api:
+    <<: *hardening
+    image: ${GCR_API_IMAGE:?set GCR_API_IMAGE in .env}
+    build:
+      # A clean checkout of gcr-api-clean (no .env, no node_modules). The
+      # Dockerfile is inline so nothing is added to that repo for this.
+      context: ${GCR_API_CLEAN_SRC:?set GCR_API_CLEAN_SRC in .env}
+      args:
+        NODE_IMAGE: ${GCR_API_NODE_IMAGE:?set GCR_API_NODE_IMAGE in .env}
+      dockerfile_inline: |
+        ARG NODE_IMAGE
+        FROM $${NODE_IMAGE}
+        RUN apt-get update \
+          && apt-get install -y --no-install-recommends tini ca-certificates \
+          && rm -rf /var/lib/apt/lists/*
+        WORKDIR /app
+        COPY package.json package-lock.json ./
+        RUN npm ci --omit=dev
+        COPY --chown=node:node . .
+        # Settings come from env/gcr-api.env at run time, never from the image,
+        # and dependencies come from the npm ci above, not from the checkout.
+        RUN if ls -a | grep -qE '^\.env($$|\.(local|production|development|vercel)$$)'; then \
+              echo "Remove .env files from the gcr-api-clean checkout; settings live in deploy/digitalocean/env/gcr-api.env" >&2; exit 1; fi
+        USER node
+        ENV NODE_ENV=production
+        ENTRYPOINT ["/usr/bin/tini", "--"]
+        CMD ["node", "server.js"]
+    restart: unless-stopped
+    env_file:
+      - path: env/gcr-api.env
+        required: true
+    environment:
+      # Always-on mode: live Telnyx calls/texts keep working after the webhook
+      # is answered, and lib/scheduler.js runs the scheduled work in-process.
+      ALWAYS_ON: "true"
+      PORT: ${GCR_API_PORT}
+      # This host's public origin: Telnyx "say" webhooks and links it builds.
+      API_BASE_URL: https://${GCR_API_DOMAIN}
+      # Paperclip: token issuer, its public keys, and where receipts and
+      # conversations are posted (CONTRACT §1, §5).
+      PAPERCLIP_ISSUER: https://${PAPERCLIP_DOMAIN}
+      PAPERCLIP_JWKS_URL: https://${PAPERCLIP_DOMAIN}/.well-known/jwks.json
+      PAPERCLIP_API_URL: https://${PAPERCLIP_DOMAIN}
+      # Shared values, set once in .env.
+      NEXTGENT_SERVICE_SECRET: ${NEXTGENT_SERVICE_SECRET:?set NEXTGENT_SERVICE_SECRET in .env}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      LITELLM_URL: http://litellm:${LITELLM_PORT}
+      CRON_SECRET: ${CRON_SECRET:?set CRON_SECRET in .env}
+    mem_limit: ${GCR_API_MEM_LIMIT:?set GCR_API_MEM_LIMIT in .env}
+    cpus: ${GCR_API_CPUS:?set GCR_API_CPUS in .env}
+    healthcheck:
+      # GET / answers with the deployment's identity (server.js).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+process.env.PORT+'/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      litellm:
+        condition: service_started
+
+  # Decision 5, option A only (all of gcr-api-clean here, nothing on Vercel):
+  # the vercel.json crons the in-process scheduler does not run.
+  cron:
+    <<: *hardening
+    image: ${CRON_IMAGE:?set CRON_IMAGE in .env}
+    profiles: ["gcr-crons"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/cron/entrypoint.sh"]
+    environment:
+      CRON_SECRET: ${CRON_SECRET:?set CRON_SECRET in .env}
+      GCR_INTERNAL_URL: http://gcr-api:${GCR_API_PORT}
+    volumes:
+      - ./cron:/cron:ro
+    mem_limit: ${CRON_MEM_LIMIT:?set CRON_MEM_LIMIT in .env}
+    depends_on:
+      gcr-api:
+        condition: service_healthy
+
+volumes:
+  # Same name as the foundation stack: Paperclip run logs, agent workspaces,
+  # the local secrets key file. Back it up (STEPS.md).
+  nextgent-data:
+  caddy-data:
+  caddy-config:

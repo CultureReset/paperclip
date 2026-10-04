@@ -1,0 +1,46 @@
+# The worker host's HTTPS front door: one Caddy for every business's workers
+# on this host. Paperclip calls the gateways through it (Hermes over HTTPS,
+# OpenClaw over WSS); nothing else is published.
+#
+#   cp edge.env.example edge.env      # domain email, the control Droplet's IP
+#   docker compose --env-file edge.env -f docker-compose.edge.yml up -d
+#
+# Each business adds one file under sites/ (from site.caddy.example), and
+# Caddy is attached to that business's network (WORKERS.md, "Add a business").
+
+name: nextgent-workers-edge
+
+services:
+  caddy:
+    image: ${CADDY_IMAGE:?set CADDY_IMAGE in edge.env}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in edge.env}
+      # Only this address may call the gateways (the control Droplet's public
+      # IP, or its VPC CIDR if you route over the VPC).
+      PAPERCLIP_EGRESS_CIDRS: ${PAPERCLIP_EGRESS_CIDRS:?set PAPERCLIP_EGRESS_CIDRS in edge.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      - edge-caddy-data:/data
+      - edge-caddy-config:/config
+    mem_limit: ${CADDY_MEM_LIMIT:?set CADDY_MEM_LIMIT in edge.env}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  edge-caddy-data:
+  edge-caddy-config:

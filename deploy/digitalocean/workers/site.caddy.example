@@ -1,0 +1,13 @@
+# One business's gateways. Copy to sites/<id>.caddy, replace <id>, the two
+# hostnames and the ports (HERMES_PORT / OPENCLAW_PORT from businesses/<id>.env).
+# Delete the OpenClaw block if this business has no OpenClaw worker.
+
+<id>-hermes.workers.example.com {
+	import paperclip_only
+	reverse_proxy <id>-hermes:8642
+}
+
+<id>-claw.workers.example.com {
+	import paperclip_only
+	reverse_proxy <id>-openclaw:18789
+}

@@ -1,0 +1,8 @@
+# Real settings never go in git. The *.example files are the templates.
+.env
+env/*.env
+workers/edge.env
+workers/businesses/*.env
+workers/sites/*.caddy
+workers/businesses/*.openclaw.json
+caddy-sites/*.caddy

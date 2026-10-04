@@ -1,0 +1,24 @@
+# Caddy: the only thing listening on the internet (80 and 443).
+# Certificates are issued and renewed automatically for each domain below.
+# Every {$NAME} comes from ../.env through docker-compose.yml.
+
+{
+	email {$ACME_EMAIL}
+}
+
+# Paperclip: dashboard, API, WebSockets (live updates), /.well-known/jwks.json.
+{$PAPERCLIP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy paperclip:3100
+}
+
+# gcr-api-clean: business data, MCP, Telnyx live webhooks, relay, email
+# intake, Stripe and Google callbacks.
+{$GCR_API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy gcr-api:{$GCR_API_PORT}
+}
+
+# Optional sites (decision needed, see STEPS.md "Decisions"): a site file in
+# caddy-sites/ named *.caddy is loaded; *.caddy.example files are not.
+import /etc/caddy/sites/*.caddy

@@ -1,0 +1,15 @@
+# OPTION (decision needed): publish LiteLLM's model API on its own domain.
+# Needed only if something off this Droplet calls LiteLLM: workers on other
+# hosts, or gcr-api-clean on Vercel (decision 5 option B). The alternative is
+# keeping LiteLLM private to this Droplet (and its VPC).
+# To choose this option: copy to litellm-public.caddy and set LITELLM_DOMAIN
+# and LITELLM_ADMIN_CIDRS in ../.env. The API is key-authenticated; the admin
+# UI is limited to LITELLM_ADMIN_CIDRS.
+{$LITELLM_DOMAIN} {
+	@adminUi {
+		path /ui /ui/* /sso/*
+		not remote_ip {$LITELLM_ADMIN_CIDRS}
+	}
+	respond @adminUi 403
+	reverse_proxy litellm:{$LITELLM_PORT}
+}

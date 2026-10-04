@@ -1,0 +1,11 @@
+# gcr-api-clean's scheduled routes that lib/scheduler.js does NOT run.
+# Only with the gcr-crons profile (decision 5, option A: all of gcr-api-clean
+# on this Droplet). Same paths and schedules as gcr-api-clean's vercel.json.
+# The scheduler (ALWAYS_ON=true) already covers automations tick, Google
+# drain and LiteLLM usage; those are deliberately not repeated here.
+#
+# min hour dom mon dow  command
+0    *    *   *   *     /cron/hit.sh GET  /api/platform/cron/reminders
+*/30 *    *   *   *     /cron/hit.sh POST /api/gcr/deep-crawl/run
+0    *    *   *   *     /cron/hit.sh GET  /api/email-parser/ical-import/run
+*/5  *    *   *   *     /cron/hit.sh GET  /api/transportation/expire
