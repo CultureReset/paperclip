@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import {
   activityLog,
   agents,
@@ -193,12 +193,16 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
   it("refuses to link a business another company already has", async () => {
     const a = await seedCompany("LKA");
     const b = await seedCompany("LKB");
-    const { fetch } = fakeUpstream({
+    const { calls, fetch } = fakeUpstream({
       "POST /api/nextgent/link": () => ({ body: { entitySlug: "shared", forwardingAddress: null, businessToken: "t" } }),
     });
     const links = nextgentBusinessLinkService(db, { config: configWith(), fetch });
     await links.link(a, { entitySlug: "shared" }, null);
+    expect(calls).toHaveLength(1);
     await expect(links.link(b, { entitySlug: "shared" }, null)).rejects.toMatchObject({ status: 409 });
+    // Refused before gcr-api-clean is asked, so no link or token is left behind there.
+    expect(calls).toHaveLength(1);
+    expect(await db.select().from(nextgentBusinessLinks).where(eq(nextgentBusinessLinks.companyId, b))).toHaveLength(0);
   });
 
   it("runs the sign-up setup: LiteLLM key for the company and its assistant, once", async () => {
@@ -442,6 +446,42 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       expect(reauthorized.body).toMatchObject({ version: "2.0.1", permissions: ["availability:read", "bookings:write"] });
       const [install] = await db.select().from(storeInstalls).where(eq(storeInstalls.companyId, companyId));
       expect(install.approvedPermissions).toEqual(["availability:read", "bookings:write"]);
+    });
+
+    it("rolls an update back when gcr-api-clean refuses the new permissions, and applies it on an explicit retry", async () => {
+      const companyId = await seedCompany("RB");
+      let refuse = false;
+      const { calls, fetch } = fakeUpstream({
+        "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
+        "POST /api/nextgent/installs": () => (refuse ? { status: 409, body: { error: "Business not linked" } } : { body: { token: `token-${calls.length}` } }),
+      });
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
+      const item = await publish(store, "booker", "pack", agentRelease);
+      const installed = await store.install(companyId, item.id, null);
+      const wider = {
+        agents: [{ key: "booker", name: "Booker v2", adapterType: "process" }],
+        nextgent: { kind: "agent", permissions: [...agentRelease.nextgent.permissions, { permission: "bookings:write", reason: "Book tables" }] },
+      };
+      const { version: v2 } = await store.addVersion(item.id, { version: "2.0.0", payload: wider }, null);
+
+      refuse = true;
+      await expect(store.updateInstall(companyId, item.id, "owner-RB", { approvePermissions: true })).rejects.toMatchObject({ status: 409 });
+      const [after] = await db.select().from(storeInstalls).where(eq(storeInstalls.id, installed.id));
+      // Nothing moved on this side: same version, same grants, same content.
+      expect(after.versionId).toBe(installed.versionId);
+      expect(after.approvedPermissions).toEqual(["availability:read"]);
+      const [agent] = await db.select().from(agents).where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
+      expect(agent.name).toBe("Booker");
+      const [listed] = await store.listForCompany(companyId);
+      expect(listed).toMatchObject({ installedVersion: "1.0.0", updateAvailable: true, needsApproval: true });
+
+      // The owner retries once gcr-api-clean is happy again; both sides move together.
+      refuse = false;
+      await store.updateInstall(companyId, item.id, "owner-RB", { approvePermissions: true });
+      const [moved] = await db.select().from(storeInstalls).where(eq(storeInstalls.id, installed.id));
+      expect(moved.versionId).toBe(v2.id);
+      expect(moved.approvedPermissions).toEqual(["availability:read", "bookings:write"]);
+      expect(calls.filter((call) => call.method === "POST").at(-1)?.body).toMatchObject({ version: "2.0.0", permissions: ["availability:read", "bookings:write"] });
     });
 
     it("gives an automation's hand-off its agent's routine with an HMAC webhook", async () => {

@@ -47,6 +47,16 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
     return user?.email ? { email: user.email } : null;
   }
 
+  /** One business, one company: refuse when another company already holds this slug. */
+  async function assertNotHeldByAnother(companyId: string, entitySlug: string) {
+    const holder = await db
+      .select({ companyId: nextgentBusinessLinks.companyId })
+      .from(nextgentBusinessLinks)
+      .where(eq(nextgentBusinessLinks.entitySlug, entitySlug))
+      .then((rows) => rows[0] ?? null);
+    if (holder && holder.companyId !== companyId) throw conflict("That business is already linked to another account");
+  }
+
   async function syncPlugin(companyId: string) {
     try {
       if (!(await plugin.sync(companyId))) {
@@ -62,6 +72,9 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
 
     async link(companyId: string, input: BusinessLinkInput, userId: string | null) {
       if (!gcr.configured) throw new HttpError(503, "Business linking is not configured on this server");
+      // One business, one company. Refuse a slug another company holds before
+      // gcr-api-clean is asked, so a refusal never leaves a link or token there.
+      if (input.entitySlug) await assertNotHeldByAnother(companyId, input.entitySlug);
       const notify = await ownerContact(userId);
       const request = {
         companyId,
@@ -87,13 +100,9 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
       const upstreamKind = [linked.kind, linked.entityType].find((value): value is string => typeof value === "string" && value.trim() !== "");
       const previous = await get(companyId);
       const businessKind = upstreamKind?.trim() ?? input.create?.kind ?? previous?.businessKind ?? null;
-      // One business, one company: never keep a token for a business another company holds.
-      const holder = await db
-        .select({ companyId: nextgentBusinessLinks.companyId })
-        .from(nextgentBusinessLinks)
-        .where(eq(nextgentBusinessLinks.entitySlug, linked.entitySlug))
-        .then((rows) => rows[0] ?? null);
-      if (holder && holder.companyId !== companyId) throw conflict("That business is already linked to another account");
+      // Checked again on the slug gcr-api-clean answered with (a created or
+      // normalised one): never keep a token for a business another company holds.
+      await assertNotHeldByAnother(companyId, linked.entitySlug);
       const secretId = linked.businessToken
         ? await secrets.put(
             companyId,

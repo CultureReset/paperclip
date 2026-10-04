@@ -3,6 +3,7 @@ import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { companies, nextgentBusinessLinks, storeDeployments, storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
 import { badRequest, conflict, notFound, unprocessable } from "../errors.js";
+import { logger } from "../middleware/logger.js";
 import { readNextgentConfig } from "./nextgent-config.js";
 import { pluginRegistryService } from "./plugin-registry.js";
 import { parseStorePayload, storeContentService, storeNextgentSectionSchema } from "./store-content.js";
@@ -221,9 +222,33 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
     const section = nextgentSectionOf(version.payload);
     const granted = carriedGrant(install.approvedPermissions, section);
     if (section ? !samePermissions(install.approvedPermissions, granted) : install.approvedPermissions !== null) {
-      await bridge.activate({ item, install: updated, version, userId, firstActivation: false, permissions: granted });
+      try {
+        await bridge.activate({ item, install: updated, version, userId, firstActivation: false, permissions: granted });
+      } catch (err) {
+        // gcr-api-clean kept the old scope, so this side goes back to the old
+        // release too: version, grants and content. The install then still
+        // shows the update as available, and the owner retries it explicitly.
+        await rollBackMove(item, install, userId);
+        throw err;
+      }
     }
     return updated;
+  }
+
+  /** Undo moveInstall's Paperclip-side changes after gcr-api-clean refused the new scope. */
+  async function rollBackMove(item: StoreItemRow, install: StoreInstallRow, userId: string | null) {
+    try {
+      await db
+        .update(storeInstalls)
+        .set({ versionId: install.versionId, approvedPermissions: install.approvedPermissions, updatedAt: new Date() })
+        .where(eq(storeInstalls.id, install.id));
+      const previous = install.versionId
+        ? await db.select().from(storeItemVersions).where(eq(storeItemVersions.id, install.versionId)).then((rows) => rows[0] ?? null)
+        : null;
+      if (previous) await content.sync(install.companyId, item, previous.payload, userId, install.id);
+    } catch (rollbackError) {
+      logger.error({ err: rollbackError, installId: install.id, itemKey: item.key }, "Could not roll a store update back after gcr-api-clean refused it");
+    }
   }
 
   interface DeployPlanEntry {
