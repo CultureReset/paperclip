@@ -1,3 +1,4 @@
+import { appOrigins } from "../auth/better-auth.js";
 import type { Request, RequestHandler } from "express";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -53,6 +54,7 @@ function trustedOriginsForRequest(req: Request) {
   // explicitly-configured PAPERCLIP_PUBLIC_URL when it's set.
   const publicUrl = parseOrigin(process.env.PAPERCLIP_PUBLIC_URL?.trim());
   if (publicUrl) origins.add(publicUrl);
+  for (const origin of appOrigins()) origins.add(origin);
   return origins;
 }
 

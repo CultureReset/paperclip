@@ -207,7 +207,28 @@ export function deriveAuthTrustedOrigins(config: Config, opts?: { listenPort?: n
     }
   }
 
+  for (const origin of appOrigins()) trustedOrigins.add(origin);
+
   return Array.from(trustedOrigins);
+}
+
+/**
+ * Separately hosted front ends (the admin console and the customer app) that
+ * forward their /api calls to this server. Comma-separated origins in
+ * PAPERCLIP_APP_ORIGINS, e.g. "https://admin.example.com,https://app.example.com".
+ */
+export function appOrigins(env: NodeJS.ProcessEnv = process.env): string[] {
+  return (env.PAPERCLIP_APP_ORIGINS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .flatMap((value) => {
+      try {
+        return [new URL(value).origin.toLowerCase()];
+      } catch {
+        return [];
+      }
+    });
 }
 
 /**

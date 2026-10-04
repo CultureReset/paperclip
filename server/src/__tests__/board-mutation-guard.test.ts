@@ -54,6 +54,21 @@ describe("boardMutationGuard", () => {
     });
   });
 
+  it("trusts the separately hosted app origins named in PAPERCLIP_APP_ORIGINS", async () => {
+    const previous = process.env.PAPERCLIP_APP_ORIGINS;
+    process.env.PAPERCLIP_APP_ORIGINS = "https://app.example.com, https://admin.example.com/";
+    try {
+      const app = createApp("board");
+      const trusted = await request(app).post("/mutate").set("Origin", "https://admin.example.com").send({});
+      expect([200, 204]).toContain(trusted.status);
+      const other = await request(app).post("/mutate").set("Origin", "https://evil.example.com").send({});
+      expect(other.status).toBe(403);
+    } finally {
+      if (previous === undefined) delete process.env.PAPERCLIP_APP_ORIGINS;
+      else process.env.PAPERCLIP_APP_ORIGINS = previous;
+    }
+  });
+
   it("allows local implicit board mutations without origin", async () => {
     const app = createApp("board", "local_implicit");
     const res = await request(app).post("/mutate").send({ ok: true });
