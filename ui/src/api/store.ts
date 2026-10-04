@@ -14,6 +14,7 @@ export interface StoreItemVersion {
   advisoryType: StoreAdvisoryType;
   required: boolean;
   changelog: string | null;
+  payload: Record<string, unknown>;
   createdAt: string;
 }
 
@@ -51,6 +52,7 @@ export interface StoreListing {
   updateAvailable: boolean;
   updateAdvisory: StoreAdvisoryType | null;
   updateChangelog: string | null;
+  contents: { skills: number; agents: number; routines: number };
 }
 
 export interface StoreRelease {
@@ -59,6 +61,7 @@ export interface StoreRelease {
   advisoryType: StoreAdvisoryType;
   required: boolean;
   changelog?: string | null;
+  payload?: Record<string, unknown>;
 }
 
 export interface StoreSubscription {
@@ -80,7 +83,7 @@ export const storeApi = {
   listAll: () => api.get<StoreAdminItem[]>("/store/admin/items"),
   create: (input: StoreItemCreate) => api.post<StoreAdminItem>("/store/admin/items", input),
   addVersion: (itemId: string, input: StoreRelease) =>
-    api.post<{ appliedTo: number; pendingFor: number }>(`/store/admin/items/${itemId}/versions`, input),
+    api.post<{ appliedTo: number; pendingFor: number; failedFor: string[] }>(`/store/admin/items/${itemId}/versions`, input),
   publish: (itemId: string) => api.post<StoreAdminItem>(`/store/admin/items/${itemId}/publish`, {}),
   retire: (itemId: string) => api.post<StoreAdminItem>(`/store/admin/items/${itemId}/retire`, {}),
 

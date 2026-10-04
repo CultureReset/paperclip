@@ -3,7 +3,12 @@ import express from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
+  agents,
   companies,
+  companySkills,
+  routines,
+  routineTriggers,
+  storeInstallResources,
   companyMemberships,
   createDb,
   pluginCompanySettings,
@@ -19,6 +24,7 @@ import {
 import { errorHandler } from "../middleware/index.js";
 import { storeRoutes } from "../routes/store.js";
 import { storeService } from "../services/store.ts";
+import { and, eq, sql } from "drizzle-orm";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -41,13 +47,8 @@ describeEmbeddedPostgres("store", () => {
   }, 20_000);
 
   afterEach(async () => {
-    await db.delete(storeInstalls);
-    await db.delete(storeItemVersions);
-    await db.delete(storeItems);
-    await db.delete(pluginCompanySettings);
-    await db.delete(plugins);
-    await db.delete(companyMemberships);
-    await db.delete(companies);
+    // Installing content touches agents, routines, skills and the activity log, so clear by cascade.
+    await db.execute(sql`TRUNCATE companies, store_items, plugins CASCADE`);
   });
 
   afterAll(async () => {
@@ -188,6 +189,60 @@ describeEmbeddedPostgres("store", () => {
 
     // A company that never installed it is untouched.
     expect(await view("dave", outsider)).toMatchObject({ installed: false });
+  });
+
+  it("puts a pack's skills, agents and routines inside the company, updates them and takes them back out", async () => {
+    const companyA = await seedCompany("CNA", [{ userId: "alice", role: "owner" }]);
+    const companyB = await seedCompany("CNB", [{ userId: "bob", role: "owner" }]);
+    const app = appAs(admin);
+    const item = (await request(app).post("/api/store/admin/items").send({ key: "front-desk", kind: "pack", name: "Front Desk" }).expect(201)).body;
+    const v1 = {
+      skills: [{ key: "booking", name: "Booking", markdown: "# Booking\n\nBook charters." }],
+      agents: [{ key: "receptionist", name: "Receptionist", role: "general", adapterType: "process", instructions: "Answer the phone." }],
+      routines: [{ key: "morning", title: "Morning check", agentKey: "receptionist", cron: "0 8 * * *" }],
+    };
+    await request(app)
+      .post(`/api/store/admin/items/${item.id}/versions`)
+      .send({ version: "0.9.0", payload: { routines: [{ key: "x", title: "X", agentKey: "nobody" }] } })
+      .expect(400);
+    await request(app).post(`/api/store/admin/items/${item.id}/versions`).send({ version: "1.0.0", payload: v1 }).expect(201);
+    await request(app).post(`/api/store/admin/items/${item.id}/publish`).expect(200);
+    await request(appAs(member("alice", companyA))).post(`/api/companies/${companyA}/store/${item.id}/install`).expect(201);
+
+    const agentsIn = (companyId: string) => db.select().from(agents).where(eq(agents.companyId, companyId));
+    const routinesIn = (companyId: string) => db.select().from(routines).where(eq(routines.companyId, companyId));
+    const skillKeysIn = async (companyId: string) =>
+      (await db.select().from(companySkills).where(eq(companySkills.companyId, companyId))).map((skill) => skill.key);
+
+    const [receptionist] = await agentsIn(companyA);
+    expect(receptionist).toMatchObject({ name: "Receptionist", status: "idle" });
+    const [morning] = await routinesIn(companyA);
+    expect(morning).toMatchObject({ title: "Morning check", assigneeAgentId: receptionist.id, status: "active" });
+    expect(await db.select().from(routineTriggers).where(eq(routineTriggers.routineId, morning.id))).toEqual([
+      expect.objectContaining({ kind: "schedule", cronExpression: "0 8 * * *" }),
+    ]);
+    expect(await skillKeysIn(companyA)).toContain("store/front-desk/booking");
+    // Nothing leaks into a company that did not install it.
+    expect(await agentsIn(companyB)).toEqual([]);
+    expect(await skillKeysIn(companyB)).not.toContain("store/front-desk/booking");
+
+    // An update changes the agent in place, drops the routine and adds a skill.
+    const v2 = {
+      skills: [...v1.skills, { key: "refunds", name: "Refunds", markdown: "# Refunds" }],
+      agents: [{ ...v1.agents[0], name: "Front Desk Agent" }],
+    };
+    expect((await request(app).post(`/api/store/admin/items/${item.id}/versions`).send({ version: "1.1.0", payload: v2 }).expect(201)).body)
+      .toMatchObject({ appliedTo: 1, failedFor: [] });
+    const afterUpdate = await agentsIn(companyA);
+    expect(afterUpdate).toEqual([expect.objectContaining({ id: receptionist.id, name: "Front Desk Agent" })]);
+    expect((await routinesIn(companyA))[0].status).toBe("archived");
+    expect(await skillKeysIn(companyA)).toEqual(expect.arrayContaining(["store/front-desk/booking", "store/front-desk/refunds"]));
+
+    // Uninstall takes it all back out.
+    await request(appAs(member("alice", companyA))).delete(`/api/companies/${companyA}/store/${item.id}`).expect(204);
+    expect((await agentsIn(companyA))[0].status).toBe("terminated");
+    expect((await skillKeysIn(companyA)).filter((key) => key.startsWith("store/"))).toEqual([]);
+    expect(await db.select().from(storeInstallResources).where(and(eq(storeInstallResources.companyId, companyA)))).toEqual([]);
   });
 
   it("shows a store plugin only inside companies that installed it", async () => {

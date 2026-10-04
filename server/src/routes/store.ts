@@ -122,13 +122,13 @@ export function storeRoutes(db: Db) {
   router.post("/companies/:companyId/store/:itemId/update", async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertCanManageInstalls(req, access, companyId);
-    res.json(await store.updateInstall(companyId, req.params.itemId as string));
+    res.json(await store.updateInstall(companyId, req.params.itemId as string, req.actor.userId ?? null));
   });
 
   router.delete("/companies/:companyId/store/:itemId", async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertCanManageInstalls(req, access, companyId);
-    await store.uninstall(companyId, req.params.itemId as string);
+    await store.uninstall(companyId, req.params.itemId as string, req.actor.userId ?? null);
     res.status(204).end();
   });
 

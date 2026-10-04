@@ -26,6 +26,16 @@ import { STORE_KIND_LABELS } from "./Store";
 
 const KINDS = Object.keys(STORE_KIND_LABELS) as StoreItemKind[];
 
+const CONTENTS_EXAMPLE = JSON.stringify(
+  {
+    skills: [{ key: "booking", name: "Booking", markdown: "# Booking\n\nHow to book a charter." }],
+    agents: [{ key: "receptionist", name: "Receptionist", instructions: "Answer calls and book trips." }],
+    routines: [{ key: "morning", title: "Morning check", agentKey: "receptionist", cron: "0 8 * * *" }],
+  },
+  null,
+  2,
+);
+
 const STATUS_LABELS: Record<StoreAdminItem["status"], string> = {
   draft: "Draft",
   published: "Published",
@@ -259,6 +269,26 @@ function NewVersionDialog({
   const [channel, setChannel] = useState<StoreChannel>("stable");
   const [advisoryType, setAdvisoryType] = useState<StoreAdvisoryType>("enhancement");
   const [required, setRequired] = useState(false);
+  const [contents, setContents] = useState("");
+
+  // Start from the previous release's contents so a release only changes what is new.
+  useEffect(() => {
+    if (!item) return;
+    const previous = item.versions[0]?.payload;
+    setContents(previous && Object.keys(previous).length > 0 ? JSON.stringify(previous, null, 2) : "");
+  }, [item]);
+
+  let parsedContents: Record<string, unknown> | undefined;
+  let contentsError: string | null = null;
+  if (contents.trim()) {
+    try {
+      const value = JSON.parse(contents);
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Contents must be a JSON object");
+      parsedContents = value;
+    } catch (err) {
+      contentsError = (err as Error).message;
+    }
+  }
 
   const save = useMutation({
     mutationFn: () =>
@@ -268,13 +298,16 @@ function NewVersionDialog({
         advisoryType,
         required: advisoryType === "security" && required,
         changelog: changelog || null,
+        payload: parsedContents ?? {},
       }),
     onSuccess: (result) => {
       onSaved();
       const companies = (n: number) => `${n} ${n === 1 ? "company" : "companies"}`;
       pushToast({
         title: `Released v${version}`,
-        body: `Updated ${companies(result.appliedTo)}. Waiting on ${companies(result.pendingFor)} that update manually.`,
+        body:
+          `Updated ${companies(result.appliedTo)}. Waiting on ${companies(result.pendingFor)} that update manually.` +
+          (result.failedFor.length ? ` Failed for ${companies(result.failedFor.length)}; they can retry with Update.` : ""),
         tone: "success",
       });
       setVersion("");
@@ -329,6 +362,24 @@ function NewVersionDialog({
             <Label htmlFor="store-changelog">What changed</Label>
             <Textarea id="store-changelog" value={changelog} onChange={(e) => setChangelog(e.target.value)} rows={3} />
           </div>
+          {item?.kind !== "plugin" && (
+            <div className="grid gap-2">
+              <Label htmlFor="store-contents">Contents</Label>
+              <Textarea
+                id="store-contents"
+                value={contents}
+                onChange={(e) => setContents(e.target.value)}
+                rows={8}
+                className="font-mono text-xs"
+                placeholder={CONTENTS_EXAMPLE}
+              />
+              <p className="text-xs text-muted-foreground">
+                The skills, agents and routines a company gets. Anything you leave out of a release is removed from
+                companies when they take it.
+              </p>
+              {contentsError && <p className="text-xs text-destructive">{contentsError}</p>}
+            </div>
+          )}
           {advisoryType === "security" && (
             <label className="flex items-center gap-2 text-sm">
               <Checkbox checked={required} onCheckedChange={(value) => setRequired(value === true)} />
@@ -340,7 +391,7 @@ function NewVersionDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={!version || save.isPending} onClick={() => save.mutate()}>
+          <Button disabled={!version || contentsError !== null || save.isPending} onClick={() => save.mutate()}>
             {save.isPending ? "Releasing..." : "Release"}
           </Button>
         </DialogFooter>

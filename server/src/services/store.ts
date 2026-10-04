@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { pluginRegistryService } from "./plugin-registry.js";
+import { parseStorePayload, storeContentService } from "./store-content.js";
 
 export const STORE_ITEM_KINDS = ["plugin", "pack", "skill", "automation", "connector"] as const;
 export type StoreItemKind = (typeof STORE_ITEM_KINDS)[number];
@@ -52,6 +53,7 @@ export interface StoreSubscriptionInput {
  */
 export function storeService(db: Db) {
   const plugins = pluginRegistryService(db);
+  const content = storeContentService(db);
 
   async function getItem(itemId: string): Promise<StoreItemRow> {
     const item = await db.select().from(storeItems).where(eq(storeItems.id, itemId)).then((rows) => rows[0]);
@@ -76,6 +78,17 @@ export function storeService(db: Db) {
       .from(storeInstalls)
       .where(and(eq(storeInstalls.companyId, companyId), eq(storeInstalls.itemId, itemId)))
       .then((rows) => rows[0] ?? null);
+  }
+
+  /** Put a release's content inside the company, then record the install as on that release. */
+  async function moveInstall(item: StoreItemRow, install: StoreInstallRow, version: StoreVersionRow, userId: string | null) {
+    await content.sync(install.companyId, item, version.payload, userId);
+    const [updated] = await db
+      .update(storeInstalls)
+      .set({ versionId: version.id, updatedAt: new Date() })
+      .where(eq(storeInstalls.id, install.id))
+      .returning();
+    return updated;
   }
 
   /** Turn the item's effect on or off inside one company. */
@@ -144,13 +157,14 @@ export function storeService(db: Db) {
       const advisoryType = input.advisoryType ?? "enhancement";
       const required = input.required ?? false;
       if (required && advisoryType !== "security") throw badRequest("Only security advisories can be required");
-      return db.transaction(async (tx) => {
+      const payload = item.kind === "plugin" ? input.payload ?? {} : parseStorePayload(input.payload);
+      const version = await db.transaction(async (tx) => {
         const existing = await tx
           .select({ id: storeItemVersions.id })
           .from(storeItemVersions)
           .where(and(eq(storeItemVersions.itemId, itemId), eq(storeItemVersions.version, input.version)));
         if (existing.length > 0) throw conflict(`Version ${input.version} already exists for ${item.name}`);
-        const [version] = await tx
+        const [inserted] = await tx
           .insert(storeItemVersions)
           .values({
             itemId,
@@ -159,7 +173,7 @@ export function storeService(db: Db) {
             advisoryType,
             required,
             changelog: input.changelog ?? null,
-            payload: input.payload ?? {},
+            payload,
             createdByUserId: userId,
           })
           .returning();
@@ -167,27 +181,38 @@ export function storeService(db: Db) {
         if (channel === "stable" || !item.latestVersionId) {
           await tx
             .update(storeItems)
-            .set({ latestVersionId: version.id, updatedAt: new Date() })
+            .set({ latestVersionId: inserted.id, updatedAt: new Date() })
             .where(eq(storeItems.id, itemId));
         }
-        const reached = await tx
-          .select()
-          .from(storeInstalls)
-          .where(
-            and(
-              eq(storeInstalls.itemId, itemId),
-              channel === "stable" ? undefined : eq(storeInstalls.channel, "fast"),
-            ),
-          );
-        const applyTo = reached.filter((install) => required || install.approvalMode === "automatic");
-        if (applyTo.length > 0) {
-          await tx
-            .update(storeInstalls)
-            .set({ versionId: version.id, updatedAt: new Date() })
-            .where(inArray(storeInstalls.id, applyTo.map((install) => install.id)));
-        }
-        return { version, appliedTo: applyTo.length, pendingFor: reached.length - applyTo.length };
+        return inserted;
       });
+
+      const reached = await db
+        .select()
+        .from(storeInstalls)
+        .where(
+          and(
+            eq(storeInstalls.itemId, itemId),
+            channel === "stable" ? undefined : eq(storeInstalls.channel, "fast"),
+          ),
+        );
+      const applyTo = reached.filter((install) => required || install.approvalMode === "automatic");
+      // One company's failure must not hold back the others; it keeps its old
+      // version and can retry with Update.
+      const failedFor: string[] = [];
+      for (const install of applyTo) {
+        try {
+          await moveInstall(item, install, version, userId);
+        } catch {
+          failedFor.push(install.companyId);
+        }
+      }
+      return {
+        version,
+        appliedTo: applyTo.length - failedFor.length,
+        pendingFor: reached.length - applyTo.length,
+        failedFor,
+      };
     },
 
     async publish(itemId: string) {
@@ -237,6 +262,12 @@ export function storeService(db: Db) {
         const latest = itemVersions.find((version) => channelsFor(channel).includes(version.channel as StoreChannel)) ?? null;
         const current = install ? itemVersions.find((version) => version.id === install.versionId) ?? null : null;
         const updateAvailable = install !== null && latest !== null && install.versionId !== latest.id;
+        const shown = (current ?? latest)?.payload as Record<string, unknown[] | undefined> | undefined;
+        const contents = {
+          skills: shown?.skills?.length ?? 0,
+          agents: shown?.agents?.length ?? 0,
+          routines: shown?.routines?.length ?? 0,
+        };
         return {
           id: item.id,
           key: item.key,
@@ -254,6 +285,7 @@ export function storeService(db: Db) {
           updateAvailable,
           updateAdvisory: updateAvailable ? latest?.advisoryType ?? null : null,
           updateChangelog: updateAvailable ? latest?.changelog ?? null : null,
+          contents,
         };
       });
     },
@@ -266,6 +298,13 @@ export function storeService(db: Db) {
       const version = await newestFor(itemId, channel);
       if (!version) throw conflict(`${item.name} has no release on the ${channel} channel`);
       await applyToCompany(item, companyId, true);
+      try {
+        await content.sync(companyId, item, version.payload, userId);
+      } catch (err) {
+        await content.remove(companyId, item, userId).catch(() => undefined);
+        await applyToCompany(item, companyId, false).catch(() => undefined);
+        throw err;
+      }
       const [install] = await db
         .insert(storeInstalls)
         .values({
@@ -293,26 +332,22 @@ export function storeService(db: Db) {
       return updated;
     },
 
-    async uninstall(companyId: string, itemId: string) {
+    async uninstall(companyId: string, itemId: string, userId: string | null = null) {
       const item = await getItem(itemId);
       const install = await getInstall(companyId, itemId);
       if (!install) throw notFound(`${item.name} is not installed`);
+      await content.remove(companyId, item, userId);
       await applyToCompany(item, companyId, false);
       await db.delete(storeInstalls).where(eq(storeInstalls.id, install.id));
     },
 
-    async updateInstall(companyId: string, itemId: string) {
+    async updateInstall(companyId: string, itemId: string, userId: string | null = null) {
       const item = await getItem(itemId);
       const install = await getInstall(companyId, itemId);
       if (!install) throw notFound(`${item.name} is not installed`);
       const latest = await newestFor(itemId, install.channel);
       if (!latest) throw conflict(`${item.name} has no release on the ${install.channel} channel`);
-      const [updated] = await db
-        .update(storeInstalls)
-        .set({ versionId: latest.id, updatedAt: new Date() })
-        .where(eq(storeInstalls.id, install.id))
-        .returning();
-      return updated;
+      return moveInstall(item, install, latest, userId);
     },
 
     /**

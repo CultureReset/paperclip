@@ -95,3 +95,35 @@ export const storeInstalls = pgTable(
     approvalCheck: check("store_installs_approval_check", sql`${table.approvalMode} IN ('automatic', 'manual')`),
   }),
 );
+
+/**
+ * What an install created inside its company: one row per skill, agent or
+ * routine declared in the installed release. Updates change these in place;
+ * uninstall removes them.
+ */
+export const storeInstallResources = pgTable(
+  "store_install_resources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id").notNull().references(() => storeItems.id, { onDelete: "cascade" }),
+    resourceKind: text("resource_kind").notNull(),
+    resourceKey: text("resource_key").notNull(),
+    resourceId: uuid("resource_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    companyItemResourceUq: uniqueIndex("store_install_resources_company_item_resource_uq").on(
+      table.companyId,
+      table.itemId,
+      table.resourceKind,
+      table.resourceKey,
+    ),
+    resourceIdx: index("store_install_resources_resource_idx").on(table.resourceKind, table.resourceId),
+    kindCheck: check(
+      "store_install_resources_kind_check",
+      sql`${table.resourceKind} IN ('skill', 'agent', 'routine')`,
+    ),
+  }),
+);

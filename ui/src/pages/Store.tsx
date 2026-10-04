@@ -116,6 +116,18 @@ export function Store() {
   );
 }
 
+function contentsLine(item: StoreListing) {
+  const parts = [
+    [item.contents.agents, "agent"],
+    [item.contents.skills, "skill"],
+    [item.contents.routines, "routine"],
+  ] as const;
+  return parts
+    .filter(([n]) => n > 0)
+    .map(([n, word]) => `${n} ${word}${n === 1 ? "" : "s"}`)
+    .join(", ");
+}
+
 type StoreActionKind = "install" | "update" | "uninstall";
 
 function StoreSection({
@@ -162,6 +174,7 @@ function StoreSection({
                 </div>
               </div>
               {item.summary && <p className="text-sm text-muted-foreground">{item.summary}</p>}
+              {contentsLine(item) && <p className="text-xs text-muted-foreground">Includes {contentsLine(item)}</p>}
               {item.updateAvailable && item.updateChangelog && (
                 <p className="rounded-md bg-muted px-3 py-2 text-xs">{item.updateChangelog}</p>
               )}
