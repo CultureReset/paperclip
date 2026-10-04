@@ -84,6 +84,15 @@ Response: `{ "unlinked": true, "entitySlug": "…", "exportUrl": "…" }`
 `GET` (any member) answers `{ "linked": false }` or
 `{ "linked": true, "entitySlug", "forwardingAddress", "linkedAt" }`.
 
+## Invites by email
+
+`POST /api/companies/{companyId}/invites` accepts an optional `email`. The
+invite is created as always (a link); then Paperclip asks gcr-api-clean's
+signed `POST /api/nextgent/email` to send template `team-invite` with
+`business_name`, `inviter`, `role` and `accept_link`
+(`OWNER_APP_URL/#/invite/<token>`). The response adds `emailSent` and, when it
+was not sent, `emailError`.
+
 ## Signed calls from gcr-api-clean
 
 Both carry `x-nextgent-timestamp` (unix seconds) and `x-nextgent-signature`
@@ -160,7 +169,11 @@ A release payload may carry a `nextgent` section:
 }
 ```
 
-`kind` is `agent` | `app` | `automation`; permissions are `resource:action`;
+`kind` is `agent` | `app` | `automation`; permissions are `resource:action`,
+each with a `reason` and optionally `optional: true` (the owner may decline it
+at install with `declinedPermissions: [...]`; a new optional permission never
+holds an update, it is simply not granted). An app release also carries its
+manifest as `payload.app`, kept whole.
 `handoff` (automations only) names the agent work is given to, from this
 release or another installed item (`itemKey`).
 
@@ -188,6 +201,23 @@ reason, `changesThings` for write/send), `allowed`, `reason`, and
 
 Any failure rolls the install back. The response adds `charge` (the price)
 and `charged` (whether gcr-api-clean billed it now).
+
+```
+POST /api/companies/{companyId}/installs/{installId}/token
+```
+
+Members (not viewers). The install's own business-data token for the screen
+that draws an installed app: `{ "token": "…", "expiresAt": null }`. It can only
+touch what the owner approved and is revoked on uninstall. gcr-api-clean has
+no short-lived mint for install tokens yet, so this is the install token itself.
+
+```
+POST /api/companies/{companyId}/store/{itemId}/enable
+```
+
+Owners and admins. Turns on an install an admin pushed switched off: plan
+check, content, registration with gcr-api-clean (`declinedPermissions`
+optional). This is the owner's consent.
 
 Agents an install creates carry `metadata.storeItemKey`, `metadata.installId`
 and `metadata.storeItem` (`itemId`, `itemKey`, `resourceKey`), so apps can tie
@@ -226,7 +256,12 @@ Instance admins only.
   `apply` moves installs on automatic updates and on a channel the release is
   on; `force` also moves manual ones and other channels (security fixes,
   rollbacks). A release asking for new data access is never pushed or forced
-  (`needs_consent`). Skip reasons: `not_installed`, `already_on_version`,
+  (`needs_consent`). Audience `kind` takes business kinds (`values`), listed in
+  meta from the kinds of linked businesses. `installMissing: true` also
+  installs where the item is missing (audience `all` then means every
+  company); those installs start switched off (`enabled: false`, owner turns
+  them on) unless `enabled: true` and the release needs no data and has no
+  price. Pushes cannot reach listings that are not linked to a company. Skip reasons: `not_installed`, `already_on_version`,
   `needs_consent`, `manual_updates`, `other_channel`, `failed`. `deploy`
   records the push and answers `201 { deployment, applied, skipped,
   needsConsent, reasons, companies, failedFor }`.
