@@ -1,3 +1,4 @@
+import { sendInviteEmail } from "../services/nextgent-invite-email.js";
 import {
   createHash,
   generateKeyPairSync,
@@ -3360,6 +3361,18 @@ export function accessRoutes(
         companyBranding,
         opts.authPublicBaseUrl
       );
+      // NEXT GENT: invites are links; with an email address the link is also
+      // emailed (through gcr-api-clean). The invite stands whether or not it sends.
+      const email = req.body.email
+        ? await sendInviteEmail(db, {
+            companyId,
+            to: req.body.email,
+            token,
+            businessName: companyBranding.name ?? "",
+            inviterUserId: req.actor.type === "board" ? req.actor.userId ?? null : null,
+            role: extractInviteHumanRole(created),
+          })
+        : null;
       res.status(201).json({
         ...created,
         token,
@@ -3368,7 +3381,8 @@ export function accessRoutes(
         companyName: companyBranding.name,
         onboardingTextPath: inviteSummary.onboardingTextPath,
         onboardingTextUrl: inviteSummary.onboardingTextUrl,
-        inviteMessage: inviteSummary.inviteMessage
+        inviteMessage: inviteSummary.inviteMessage,
+        ...(email ? email : {})
       });
     }
   );

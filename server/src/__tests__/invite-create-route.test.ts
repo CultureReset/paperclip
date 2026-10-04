@@ -133,4 +133,26 @@ describe("POST /companies/:companyId/invites", () => {
     expect(res.body.invitePath).toMatch(/^\/invite\/pcp_invite_/);
     expect(res.body.inviteUrl).toMatch(/^https:\/\/paperclip\.example\/invite\/pcp_invite_/);
   });
+
+  it("emails the invite link when given an address, and still creates the invite when it cannot", async () => {
+    const saved = process.env.OWNER_APP_URL;
+    delete process.env.OWNER_APP_URL;
+    try {
+      const app = await createApp();
+      const res = await request(app)
+        .post("/api/companies/company-1/invites")
+        .send({ allowedJoinTypes: "human", humanRole: "viewer", email: "new.person@example.test" });
+      expect(res.status).toBe(201);
+      expect(res.body.token).toMatch(/^pcp_invite_/);
+      expect(res.body.emailSent).toBe(false);
+      expect(res.body.emailError).toMatch(/OWNER_APP_URL/);
+
+      const plain = await request(app).post("/api/companies/company-1/invites").send({ allowedJoinTypes: "human", humanRole: "viewer" });
+      expect(plain.body).not.toHaveProperty("emailSent");
+      const bad = await request(app).post("/api/companies/company-1/invites").send({ allowedJoinTypes: "human", email: "not-an-email" });
+      expect(bad.status).toBe(400);
+    } finally {
+      if (saved !== undefined) process.env.OWNER_APP_URL = saved;
+    }
+  });
 });
