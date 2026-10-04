@@ -53,6 +53,7 @@ function configWith(overrides: Partial<NextgentConfig> = {}): NextgentConfig {
     assistant: { name: "Assistant", instructionsFile: null, adapterType: "process" },
     platformCompanyId: null,
     businessTokenTtlSeconds: 300,
+    acceptLegacySignatures: false,
     storePricing: { models: [], intervals: [], defaultCurrency: null },
     ...overrides,
   };

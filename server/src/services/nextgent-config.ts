@@ -58,6 +58,11 @@ export interface NextgentConfig {
   platformCompanyId: string | null;
   /** Business-token lifetime in seconds (contract maximum 300). */
   businessTokenTtlSeconds: number;
+  /**
+   * Accept the previous signature format (no nonce, replayable for 300 s) on
+   * inbound calls during the switch-over (NEXTGENT_ACCEPT_LEGACY_SIGNATURES). Off unless set.
+   */
+  acceptLegacySignatures: boolean;
   /** Store price vocabulary offered to the admin console; prices themselves are rows. */
   storePricing: {
     models: string[];
@@ -65,6 +70,12 @@ export interface NextgentConfig {
     /** Currency used when a price is set without one (ISO 4217). */
     defaultCurrency: string | null;
   };
+}
+
+/** An on/off setting: "true", "1", "yes" or "on" (any case) switch it on; anything else is off. */
+function flag(env: Env, key: string): boolean {
+  const raw = read(env, key)?.toLowerCase();
+  return raw === "true" || raw === "1" || raw === "yes" || raw === "on";
 }
 
 function list(env: Env, key: string): string[] {
@@ -94,6 +105,7 @@ export function readNextgentConfig(env: Env = process.env): NextgentConfig {
     },
     platformCompanyId: read(env, "NEXTGENT_PLATFORM_COMPANY_ID"),
     businessTokenTtlSeconds: Math.min(ttl ?? BUSINESS_TOKEN_MAX_TTL_SECONDS, BUSINESS_TOKEN_MAX_TTL_SECONDS),
+    acceptLegacySignatures: flag(env, "NEXTGENT_ACCEPT_LEGACY_SIGNATURES"),
     storePricing: {
       models: list(env, "NEXTGENT_STORE_PRICE_MODELS"),
       intervals: list(env, "NEXTGENT_STORE_PRICE_INTERVALS"),

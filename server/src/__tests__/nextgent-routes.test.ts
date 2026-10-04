@@ -1,7 +1,8 @@
+import { createHmac } from "node:crypto";
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { signNextgentBody } from "../services/nextgent-service-signing.js";
+import { signNextgentRequest } from "../services/nextgent-service-signing.js";
 import type { NextgentConfig } from "../services/nextgent-config.js";
 
 const mockAccess = vi.hoisted(() => ({ getMembership: vi.fn() }));
@@ -16,6 +17,8 @@ vi.mock("../services/nextgent-inbound.js", async (importOriginal) => {
 });
 
 const SECRET = "shared-secret";
+/** Sign a POST to `path` the way gcr-api-clean does (contract §3). */
+const signed = (path: string, body: string, secret = SECRET) => signNextgentRequest(secret, { method: "POST", pathname: path, query: "", rawBody: body });
 const config: NextgentConfig = {
   gcrApiUrl: "https://gcr.example.test",
   serviceSecret: SECRET,
@@ -24,6 +27,7 @@ const config: NextgentConfig = {
   assistant: { name: null, instructionsFile: null, adapterType: null },
   platformCompanyId: null,
   businessTokenTtlSeconds: 300,
+  acceptLegacySignatures: false,
   storePricing: { models: [], intervals: [], defaultCurrency: null },
 };
 
@@ -33,7 +37,7 @@ function fakeDb(rows: unknown[] = [{ id: "company-1" }]) {
   return { select: () => chain } as never;
 }
 
-async function appAs(actor: Record<string, unknown> | null, db = fakeDb()) {
+async function appAs(actor: Record<string, unknown> | null, db = fakeDb(), routeConfig: NextgentConfig = config) {
   const [{ nextgentRoutes, nextgentPublicRoutes }, { errorHandler }] = await Promise.all([
     import("../routes/nextgent.js"),
     import("../middleware/index.js"),
@@ -44,8 +48,8 @@ async function appAs(actor: Record<string, unknown> | null, db = fakeDb()) {
     (req as unknown as { actor: unknown }).actor = actor ?? { type: "none", source: "none" };
     next();
   });
-  app.use(nextgentPublicRoutes(db, { config }));
-  app.use("/api", nextgentRoutes(db, { config }));
+  app.use(nextgentPublicRoutes(db, { config: routeConfig }));
+  app.use("/api", nextgentRoutes(db, { config: routeConfig }));
   app.use(errorHandler);
   return app;
 }
@@ -217,7 +221,7 @@ describe("signed inbound endpoints (contract §5)", () => {
     const unsigned = await request(app).post("/api/nextgent/receipts").send(receipt);
     expect(unsigned.status).toBe(401);
     const body = JSON.stringify(receipt);
-    const bad = signNextgentBody("wrong-secret", body);
+    const bad = signed("/api/nextgent/receipts", body, "wrong-secret");
     const wrong = await request(app).post("/api/nextgent/receipts").set(bad).set("content-type", "application/json").send(body);
     expect(wrong.status).toBe(401);
     expect(mockInbound.recordReceipt).not.toHaveBeenCalled();
@@ -228,18 +232,51 @@ describe("signed inbound endpoints (contract §5)", () => {
     const body = JSON.stringify(receipt);
     const res = await request(await appAs(null))
       .post("/api/nextgent/receipts")
-      .set(signNextgentBody(SECRET, body))
+      .set(signed("/api/nextgent/receipts", body))
       .set("content-type", "application/json")
       .send(body);
     expect(res.status).toBe(201);
     expect(mockInbound.recordReceipt).toHaveBeenCalledWith(expect.objectContaining({ companyId: "company-1", verified: true, taskId: "task-1" }));
   });
 
+  it("rejects a replayed request and a signature made for another path", async () => {
+    mockInbound.recordReceipt.mockResolvedValue({ id: "r1", taskId: "task-1" });
+    const app = await appAs(null);
+    const body = JSON.stringify(receipt);
+    const headers = signed("/api/nextgent/receipts", body);
+    const first = await request(app).post("/api/nextgent/receipts").set(headers).set("content-type", "application/json").send(body);
+    expect(first.status).toBe(201);
+    const replay = await request(app).post("/api/nextgent/receipts").set(headers).set("content-type", "application/json").send(body);
+    expect(replay.status).toBe(401);
+    expect(replay.body.reason).toBe("replayed");
+    const elsewhere = signed("/api/nextgent/conversations", body);
+    const moved = await request(app).post("/api/nextgent/receipts").set(elsewhere).set("content-type", "application/json").send(body);
+    expect(moved.status).toBe(401);
+    expect(moved.body.reason).toBe("mismatch");
+    expect(mockInbound.recordReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the old signature format only when NEXTGENT_ACCEPT_LEGACY_SIGNATURES is on", async () => {
+    mockInbound.recordReceipt.mockResolvedValue({ id: "r1", taskId: "task-1" });
+    const body = JSON.stringify(receipt);
+    const legacy = { "x-nextgent-timestamp": String(Math.floor(Date.now() / 1000)), "x-nextgent-signature": "" };
+    legacy["x-nextgent-signature"] = createHmac("sha256", SECRET).update(`${legacy["x-nextgent-timestamp"]}.${body}`).digest("hex");
+    const strict = await request(await appAs(null)).post("/api/nextgent/receipts").set(legacy).set("content-type", "application/json").send(body);
+    expect(strict.status).toBe(401);
+    expect(strict.body.reason).toBe("missing");
+    const lenient = await request(await appAs(null, fakeDb(), { ...config, acceptLegacySignatures: true }))
+      .post("/api/nextgent/receipts")
+      .set(legacy)
+      .set("content-type", "application/json")
+      .send(body);
+    expect(lenient.status).toBe(201);
+  });
+
   it("validates a signed receipt's shape", async () => {
     const body = JSON.stringify({ companyId: "company-1", action: "x" });
     const res = await request(await appAs(null))
       .post("/api/nextgent/receipts")
-      .set(signNextgentBody(SECRET, body))
+      .set(signed("/api/nextgent/receipts", body))
       .set("content-type", "application/json")
       .send(body);
     expect(res.status).toBe(400);
@@ -259,7 +296,7 @@ describe("signed inbound endpoints (contract §5)", () => {
     const body = JSON.stringify(conversation);
     const res = await request(app)
       .post("/api/nextgent/conversations")
-      .set(signNextgentBody(SECRET, body))
+      .set(signed("/api/nextgent/conversations", body))
       .set("content-type", "application/json")
       .send(body);
     expect(res.status).toBe(201);

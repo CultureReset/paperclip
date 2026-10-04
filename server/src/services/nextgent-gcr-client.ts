@@ -1,6 +1,6 @@
 import { HttpError } from "../errors.js";
 import { gcrConfigured, readNextgentConfig, type NextgentConfig } from "./nextgent-config.js";
-import { signNextgentBody } from "./nextgent-service-signing.js";
+import { signNextgentRequest, splitRequestUrl } from "./nextgent-service-signing.js";
 
 /**
  * Signed calls from Paperclip to gcr-api-clean (contract §4). Shapes are the
@@ -75,14 +75,15 @@ export function gcrClient(options: { config?: NextgentConfig; fetch?: FetchLike 
   async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
     if (!gcrConfigured(config)) throw new GcrNotConfiguredError();
     const rawBody = body === undefined ? "" : JSON.stringify(body);
+    const url = `${config.gcrApiUrl}${path}`;
     const headers: Record<string, string> = {
       accept: "application/json",
-      ...signNextgentBody(config.serviceSecret, rawBody),
+      ...signNextgentRequest(config.serviceSecret, { method, ...splitRequestUrl(url), rawBody }),
     };
     if (body !== undefined) headers["content-type"] = "application/json";
     let response: Response;
     try {
-      response = await doFetch(`${config.gcrApiUrl}${path}`, {
+      response = await doFetch(url, {
         method,
         headers,
         ...(body !== undefined ? { body: rawBody } : {}),

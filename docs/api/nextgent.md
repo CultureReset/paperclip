@@ -95,10 +95,25 @@ was not sent, `emailError`.
 
 ## Signed calls from gcr-api-clean
 
-Both carry `x-nextgent-timestamp` (unix seconds) and `x-nextgent-signature`
-(hex HMAC-SHA256 of `${timestamp}.${rawBody}` with `NEXTGENT_SERVICE_SECRET`).
-Unsigned, stale (over 300 s) or mismatched requests get `401`; a server without
-the secret answers `503`.
+Both carry `x-nextgent-timestamp` (unix seconds), `x-nextgent-nonce` (random,
+at least 16 bytes, hex) and `x-nextgent-signature`: hex HMAC-SHA256, with
+`NEXTGENT_SERVICE_SECRET`, of
+
+```
+${timestamp}\n${nonce}\n${METHOD}\n${pathname}\n${query}\n${sha256hex(rawBody)}
+```
+
+(`METHOD` upper-case; `query` the raw query string without its `?`, empty when
+there is none; `rawBody` empty when there is none). Paperclip signs its own
+calls to gcr-api-clean the same way. Unsigned, stale (over 300 s), replayed
+(a nonce seen before inside that window) or mismatched requests get `401` with
+a `reason`; a server without the secret answers `503`. Seen nonces are kept in
+memory per server process, so a multi-instance deployment needs a shared store
+for the replay guard to hold across instances.
+
+The previous format (`${timestamp}.${rawBody}`, no nonce) is accepted only
+while `NEXTGENT_ACCEPT_LEGACY_SIGNATURES=true` is set for the switch-over; it
+is off by default.
 
 ```
 POST /api/nextgent/receipts

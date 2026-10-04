@@ -22,6 +22,7 @@ const config: NextgentConfig = {
   assistant: { name: null, instructionsFile: null, adapterType: null },
   platformCompanyId: null,
   businessTokenTtlSeconds: 300,
+  acceptLegacySignatures: false,
   storePricing: { models: [], intervals: [], defaultCurrency: null },
 };
 
@@ -43,11 +44,13 @@ describe("gcr-api-clean client (contract §4)", () => {
     expect(calls[0].init.method).toBe("POST");
     const headers = calls[0].init.headers as Record<string, string>;
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ companyId: "c1", entitySlug: "biz" });
+    expect(headers["x-nextgent-nonce"]).toMatch(/^[0-9a-f]{32,}$/);
     expect(
       verifyNextgentSignature({
         secret: "s3cret",
-        rawBody: String(calls[0].init.body),
+        request: { method: "POST", pathname: "/api/nextgent/link", query: "", rawBody: String(calls[0].init.body) },
         timestamp: headers["x-nextgent-timestamp"],
+        nonce: headers["x-nextgent-nonce"],
         signature: headers["x-nextgent-signature"],
       }),
     ).toEqual({ ok: true });
@@ -66,9 +69,20 @@ describe("gcr-api-clean client (contract §4)", () => {
       "GET https://gcr.example.test/api/nextgent/entitlement?companyId=c1&itemKey=k",
       "POST https://gcr.example.test/api/nextgent/unlink",
     ]);
-    // Bodyless requests are signed over the empty string.
-    const headers = calls[1].init.headers as Record<string, string>;
-    expect(verifyNextgentSignature({ secret: "s3cret", rawBody: "", timestamp: headers["x-nextgent-timestamp"], signature: headers["x-nextgent-signature"] })).toEqual({ ok: true });
+    // Bodyless requests are signed over the empty body; the method, path and raw query are part of the signature.
+    const signed = (index: number, method: string, pathname: string, query = "") => {
+      const headers = calls[index].init.headers as Record<string, string>;
+      return verifyNextgentSignature({
+        secret: "s3cret",
+        request: { method, pathname, query, rawBody: calls[index].init.body ? String(calls[index].init.body) : "" },
+        timestamp: headers["x-nextgent-timestamp"],
+        nonce: headers["x-nextgent-nonce"],
+        signature: headers["x-nextgent-signature"],
+      });
+    };
+    expect(signed(1, "DELETE", "/api/nextgent/installs/i1")).toEqual({ ok: true });
+    expect(signed(2, "GET", "/api/nextgent/entitlement", "companyId=c1&itemKey=k")).toEqual({ ok: true });
+    expect(signed(2, "GET", "/api/nextgent/entitlement", "")).toEqual({ ok: false, reason: "mismatch" });
   });
 
   it("passes client errors through and maps server errors to 502", async () => {

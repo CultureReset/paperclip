@@ -18,8 +18,10 @@ import {
   nextgentReceiptSchema,
 } from "../services/nextgent-inbound.js";
 import {
+  NEXTGENT_NONCE_HEADER,
   NEXTGENT_SIGNATURE_HEADER,
   NEXTGENT_TIMESTAMP_HEADER,
+  splitRequestUrl,
   verifyNextgentSignature,
 } from "../services/nextgent-service-signing.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin } from "./authz.js";
@@ -238,14 +240,20 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
   return router;
 }
 
-/** Rejects any request without a valid contract §3 signature over its exact bytes. */
+/** Rejects any request without a valid contract §3 signature over its method, path, query and exact body bytes. */
 export function requireNextgentSignature(config: NextgentConfig): RequestHandler {
   return (req, res, next) => {
     const result = verifyNextgentSignature({
       secret: config.serviceSecret,
-      rawBody: (req as unknown as { rawBody?: Buffer }).rawBody ?? Buffer.alloc(0),
+      request: {
+        method: req.method,
+        ...splitRequestUrl(req.originalUrl ?? req.url),
+        rawBody: (req as unknown as { rawBody?: Buffer }).rawBody ?? Buffer.alloc(0),
+      },
       timestamp: req.get(NEXTGENT_TIMESTAMP_HEADER),
+      nonce: req.get(NEXTGENT_NONCE_HEADER),
       signature: req.get(NEXTGENT_SIGNATURE_HEADER),
+      acceptLegacy: config.acceptLegacySignatures,
     });
     if (result.ok) {
       next();
