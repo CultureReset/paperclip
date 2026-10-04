@@ -69,9 +69,16 @@ export async function connectionFor(
   if (!baseUrl) throw new NotConfiguredError("The platform has no gcr-api-clean URL configured for this company.");
 
   const agentTokens = isRecord(config[CONFIG_KEYS.agentTokens]) ? config[CONFIG_KEYS.agentTokens] as Record<string, unknown> : {};
-  const agentRef = run.agentId ? agentTokens[run.agentId] : undefined;
+  // The platform lists every store-installed agent here. An entry that is not
+  // a secret ref (null: unlinked, or gcr-api-clean issued no token) means the
+  // agent's own token is missing, and it must never fall back to the company's.
+  const isInstalledAgent = Boolean(run.agentId) && Object.prototype.hasOwnProperty.call(agentTokens, run.agentId as string);
+  const agentRef = isInstalledAgent ? agentTokens[run.agentId as string] : undefined;
   let token: string | null = null;
-  if (run.agentId && isSecretRefBinding(agentRef)) {
+  if (isInstalledAgent) {
+    if (!isSecretRefBinding(agentRef)) {
+      throw new NotConfiguredError("This agent's own business-data token is missing. Turn the app off and on again (or reinstall it) after the business is linked.");
+    }
     token = await ctx.secrets.resolve(agentRef, { companyId, configPath: `${CONFIG_KEYS.agentTokens}.${run.agentId}` });
   } else if (isSecretRefBinding(config[CONFIG_KEYS.businessToken])) {
     token = await ctx.secrets.resolve(config[CONFIG_KEYS.businessToken] as SecretRefBinding, {

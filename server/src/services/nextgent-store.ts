@@ -296,8 +296,11 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
       });
       if (typeof result?.token === "string" && result.token && section.kind !== "automation") {
         await storeInstallToken(input.install, result.token, input.userId);
-        await syncPlugin(input.install.companyId);
       }
+      // Rewritten with or without a token: an agent whose install got none is
+      // listed as having no token, so the plugin refuses instead of falling
+      // back to the company's business token.
+      await syncPlugin(input.install.companyId);
       await logActivity(db, {
         companyId: input.install.companyId,
         actorType: input.userId ? "user" : "system",

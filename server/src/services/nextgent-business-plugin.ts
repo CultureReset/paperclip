@@ -19,7 +19,9 @@ function secretRef(secretId: string) {
  * already knows, so nobody pastes a token:
  *   apiBaseUrl            ← GCR_API_URL
  *   businessToken         ← the company's business-link secret
- *   agentTokens[agentId]  ← the install token of the store install that created that agent
+ *   agentTokens[agentId]  ← the install token of the store install that created that agent,
+ *                           or null when that install has no token (the plugin then
+ *                           refuses rather than using the company's business token)
  * The config is rebuilt from those sources every time, never patched, so it
  * cannot drift from them.
  */
@@ -34,10 +36,14 @@ export function nextgentBusinessPlugin(db: Db, options: { config?: NextgentConfi
       .from(nextgentBusinessLinks)
       .where(eq(nextgentBusinessLinks.companyId, companyId))
       .then((rows) => rows[0] ?? null);
+    // Every install registered with gcr-api-clean (it declared a NEXT GENT
+    // section), with or without a token: an agent of an install that has none
+    // is listed as null so the plugin fails closed instead of using the
+    // company's business token for it.
     const tokenInstalls = await db
       .select({ itemId: storeInstalls.itemId, tokenSecretId: storeInstalls.tokenSecretId })
       .from(storeInstalls)
-      .where(and(eq(storeInstalls.companyId, companyId), isNotNull(storeInstalls.tokenSecretId)));
+      .where(and(eq(storeInstalls.companyId, companyId), isNotNull(storeInstalls.approvedPermissions)));
     const agentTokens: Record<string, unknown> = {};
     for (const install of tokenInstalls) {
       const agentsOfInstall = await db
@@ -48,7 +54,7 @@ export function nextgentBusinessPlugin(db: Db, options: { config?: NextgentConfi
           eq(storeInstallResources.itemId, install.itemId),
           eq(storeInstallResources.resourceKind, "agent"),
         ));
-      for (const agent of agentsOfInstall) agentTokens[agent.resourceId] = secretRef(install.tokenSecretId as string);
+      for (const agent of agentsOfInstall) agentTokens[agent.resourceId] = install.tokenSecretId ? secretRef(install.tokenSecretId) : null;
     }
     const next: Record<string, unknown> = {};
     if (config.gcrApiUrl) next.apiBaseUrl = config.gcrApiUrl;

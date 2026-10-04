@@ -344,6 +344,43 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       expect(missing.status).toBe(404);
     });
 
+    it("lists an installed agent without its own token as null, so the plugin fails closed instead of using the company token", async () => {
+      const companyId = await seedCompany("FC");
+      const plugin = await installBusinessPlugin();
+      let issueToken = true;
+      const { fetch } = fakeUpstream({
+        "POST /api/nextgent/link": () => ({ body: { entitySlug: "fc-biz", forwardingAddress: null, businessToken: "company-token" } }),
+        "POST /api/nextgent/unlink": () => ({ body: {} }),
+        "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
+        "POST /api/nextgent/installs": () => ({ body: issueToken ? { token: "agent-token" } : {} }),
+        "DELETE /api/nextgent/installs/:id": () => ({ body: {} }),
+      });
+      const links = nextgentBusinessLinkService(db, { config: configWith(), fetch });
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
+      await links.link(companyId, { entitySlug: "fc-biz" }, null);
+      const item = await publish(store, "booker", "pack", agentRelease);
+      const install = await store.install(companyId, item.id, null);
+      const [booker] = await db.select().from(agents).where(eq(agents.companyId, companyId));
+      const configOf = async () => (await db.select().from(pluginConfig).where(eq(pluginConfig.pluginId, plugin.id)))[0].configJson as Record<string, Record<string, unknown>>;
+      expect(await configOf()).toMatchObject({ agentTokens: { [booker.id]: { type: "secret_ref", secretId: install.tokenSecretId } } });
+
+      // Unlink drops the install token; relink brings the company token back but not the install's.
+      await links.unlink(companyId, false, null);
+      await links.link(companyId, { entitySlug: "fc-biz" }, null);
+      const relinked = await configOf();
+      expect(relinked.businessToken).toMatchObject({ type: "secret_ref" });
+      expect(relinked.agentTokens).toEqual({ [booker.id]: null });
+
+      // An install gcr-api-clean registered without a token is listed the same way.
+      await store.uninstall(companyId, item.id, null);
+      expect((await configOf()).agentTokens).toBeUndefined();
+      issueToken = false;
+      const other = await publish(store, "greeter", "pack", { ...agentRelease, agents: [{ key: "greeter", name: "Greeter", adapterType: "process" }] });
+      await store.install(companyId, other.id, null);
+      const [greeter] = await db.select().from(agents).where(and(eq(agents.companyId, companyId), eq(agents.name, "Greeter")));
+      expect((await configOf()).agentTokens).toEqual({ [greeter.id]: null });
+    });
+
     it("installs nothing when the plan does not allow the item", async () => {
       const companyId = await seedCompany("DENY");
       const { calls, fetch } = fakeUpstream({

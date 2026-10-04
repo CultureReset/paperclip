@@ -85,6 +85,20 @@ describe("business data plugin (platform infrastructure)", () => {
     expect(calls[1].auth).toContain(COMPANY_TOKEN.secretId);
   });
 
+  it("fails closed for an installed agent whose own token is missing: never the company token", async () => {
+    const calls = fakeApi({ whoami: business });
+    // The platform lists every store-installed agent; one whose install has no
+    // token (unlinked, or gcr-api-clean issued none) is listed with null.
+    const harness = await harnessWith({
+      apiBaseUrl: API,
+      businessToken: COMPANY_TOKEN,
+      agentTokens: { "agent-b": null },
+    });
+    const result = await harness.executeTool<{ error?: string }>(TOOL_NAMES.whoami, {}, { companyId: "c1", agentId: "agent-b" });
+    expect(result.error).toMatch(/own business-data token/);
+    expect(calls).toHaveLength(0);
+  });
+
   it("never sends a slug, even when the caller passes one", async () => {
     const calls = fakeApi({ create_row: { section: "faqs", created: { id: 7 } } });
     const harness = await harnessWith({ apiBaseUrl: API, businessToken: COMPANY_TOKEN });
