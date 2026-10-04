@@ -166,9 +166,9 @@ describe("resolveBundledPluginInstalls", () => {
     expect(resolved).toHaveLength(1);
   });
 
-  it("keeps the self-hosted default list to exactly the kubernetes bundle", () => {
-    expect(SELF_HOSTED_AUTO_INSTALL_KEYS).toEqual(["kubernetes"]);
-    const [entry] = resolveBundledPluginInstalls(SELF_HOSTED_AUTO_INSTALL_KEYS, {
+  it("keeps the self-hosted default list to the kubernetes bundle plus the business-data platform plugin", () => {
+    expect(SELF_HOSTED_AUTO_INSTALL_KEYS).toEqual(["kubernetes", "business-data"]);
+    const [entry, businessData] = resolveBundledPluginInstalls(SELF_HOSTED_AUTO_INSTALL_KEYS, {
       catalogRoot: resolveBundledCatalogRoot({}),
       env: {},
       enforceCatalogRoot: false,
@@ -178,6 +178,11 @@ describe("resolveBundledPluginInstalls", () => {
       key: "kubernetes",
       pluginKey: "paperclip.kubernetes-sandbox-provider",
       localPath: "/app/packages/plugins/sandbox-providers/kubernetes",
+    });
+    expect(businessData).toEqual({
+      key: "business-data",
+      pluginKey: "culturereset.cybercheck",
+      localPath: "/app/packages/plugins/plugin-cybercheck",
     });
   });
 

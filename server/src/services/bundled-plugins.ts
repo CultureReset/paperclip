@@ -64,6 +64,13 @@ export interface BundledPluginCatalogEntry {
  */
 export const BUNDLED_PLUGIN_CATALOG: readonly BundledPluginCatalogEntry[] = [
   {
+    // Platform infrastructure for NEXT GENT: every company's agents get the
+    // business-data tools. Installed on every instance, never sold in the store.
+    key: "business-data",
+    pluginKey: "culturereset.cybercheck",
+    relativePath: "plugin-cybercheck",
+  },
+  {
     key: "createos",
     pluginKey: "paperclip.createos-sandbox-provider",
     relativePath: "sandbox-providers/createos",
@@ -111,7 +118,7 @@ export const BUNDLED_PLUGIN_CATALOG: readonly BundledPluginCatalogEntry[] = [
  * Exactly the pre-refactor behavior: the kubernetes sandbox provider is
  * auto-installed when its bundle is present, nothing else.
  */
-export const SELF_HOSTED_AUTO_INSTALL_KEYS: readonly string[] = ["kubernetes"];
+export const SELF_HOSTED_AUTO_INSTALL_KEYS: readonly string[] = ["kubernetes", "business-data"];
 
 export function resolveBundledCatalogRoot(
   env: Record<string, string | undefined>,
