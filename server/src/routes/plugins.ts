@@ -91,6 +91,7 @@ import {
 import { isCloudManagedInstance } from "../services/cloud-instance.js";
 import { getHiddenSettings } from "../services/settings-visibility.js";
 import { secretService } from "../services/secrets.js";
+import { storeService } from "../services/store.js";
 import { badRequest, forbidden, notFound, unauthorized, unprocessable } from "../errors.js";
 
 /**
@@ -921,7 +922,13 @@ export function pluginRoutes(
    */
   router.get("/plugins/ui-contributions", async (req, res) => {
     assertBoardOrgAccess(req);
-    const plugins = await registry.listByStatus("ready");
+    const companyId = typeof req.query.companyId === "string" && req.query.companyId ? req.query.companyId : null;
+    if (companyId) assertCompanyAccess(req, companyId);
+    // Store-managed plugins appear only inside companies that installed them.
+    const visibility = await storeService(db).pluginVisibility(companyId);
+    const plugins = (await registry.listByStatus("ready")).filter(
+      (plugin) => !visibility.storeManaged.has(plugin.pluginKey) || visibility.installed.has(plugin.pluginKey),
+    );
 
     const contributions: PluginUiContribution[] = plugins
       .map((plugin) => {

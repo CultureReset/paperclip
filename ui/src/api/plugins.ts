@@ -343,8 +343,12 @@ export const pluginsApi = {
    * );
    * ```
    */
-  listUiContributions: () =>
-    api.get<PluginUiContribution[]>("/plugins/ui-contributions"),
+  listUiContributions: (companyId?: string | null) =>
+    api.get<PluginUiContribution[]>(
+      companyId
+        ? `/plugins/ui-contributions?companyId=${encodeURIComponent(companyId)}`
+        : "/plugins/ui-contributions",
+    ),
 
   // ===========================================================================
   // Plugin configuration endpoints
