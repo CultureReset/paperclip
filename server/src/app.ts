@@ -53,6 +53,8 @@ import { summarySlotRoutes } from "./routes/summary-slots.js";
 import { statusCardRoutes } from "./routes/status-cards.js";
 import { teamsCatalogRoutes } from "./routes/teams-catalog.js";
 import { storeRoutes } from "./routes/store.js";
+import { nextgentPublicRoutes, nextgentRoutes } from "./routes/nextgent.js";
+import { nextgentBusinessPlugin } from "./services/nextgent-business-plugin.js";
 import { agentRoutes } from "./routes/agents.js";
 import type { SetupTokenSessionService } from "./services/setup-token-session.js";
 import {
@@ -596,6 +598,9 @@ export async function createApp(
   // before Paperclip persists or acts on any event.
   const emailChannels = emailChannelService(db, { heartbeat: connectionIntentHeartbeat, storage: opts.storageService, publicBaseUrl: opts.chatWebhookPublicBaseUrl ?? opts.authPublicBaseUrl });
   app.use(emailWebhookRoutes(emailChannels));
+  // NEXT GENT: public JWKS plus the two signed endpoints gcr-api-clean calls.
+  // Authenticated by HMAC signature over the raw body, not by session.
+  app.use(nextgentPublicRoutes(db));
   app.use(chatWebhookRoutes(chatChannels));
   // The instance validates single-use registration state and its trusted
   // current origin. This exact GET is the only public setup return.
@@ -664,6 +669,7 @@ export async function createApp(
   api.use(statusCardRoutes(db));
   api.use(teamsCatalogRoutes(db));
   api.use(storeRoutes(db));
+  api.use(nextgentRoutes(db));
   // The setup-token login session service. The router builds it and hands it
   // back through the callback below, so the shutdown hook can cancel every live
   // session (SR-4).
@@ -1300,6 +1306,13 @@ export async function createApp(
     })
     .catch((err) => {
       logger.error({ err }, "Failed to load ready plugins on startup");
+    })
+    // NEXT GENT: once the business-data plugin is installed, write its config
+    // for every linked company (links made before it was installed included).
+    .then(() => nextgentBusinessPlugin(db).syncAll())
+    .then(() => undefined)
+    .catch((err) => {
+      logger.error({ err }, "Failed to sync the business-data plugin config on startup");
     });
   app.locals.bundledPluginsStartup = bundledPluginsStartup;
   // The shutdown hook runs at most once. It caches the in-flight promise, so a
