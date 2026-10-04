@@ -1,4 +1,5 @@
 import { createContext, useContext, type ReactNode } from "react";
+import { useMenuVisible } from "@/context/MenuVisibilityContext";
 import { NavLink } from "@/lib/router";
 import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
@@ -67,7 +68,13 @@ interface SidebarNavItemProps {
   liveAccessory?: ReactNode;
 }
 
-export function SidebarNavItem({
+/** A menu link; hidden when the company's menu does not include its route. */
+export function SidebarNavItem(props: SidebarNavItemProps) {
+  const isVisible = useMenuVisible();
+  return isVisible(props.to) ? <SidebarNavItemInner {...props} /> : null;
+}
+
+function SidebarNavItemInner({
   to,
   label,
   icon: Icon,

@@ -49,6 +49,8 @@ export function Store() {
     if (selectedCompanyId) queryClient.invalidateQueries({ queryKey: queryKeys.store.company(selectedCompanyId) });
     // Installing or removing a plugin changes which plugin screens this company sees.
     queryClient.invalidateQueries({ queryKey: queryKeys.plugins.uiContributions });
+    // ...and which menu entries it has.
+    if (selectedCompanyId) queryClient.invalidateQueries({ queryKey: queryKeys.store.menu(selectedCompanyId) });
   };
 
   const action = useMutation({
@@ -175,6 +177,9 @@ function StoreSection({
               </div>
               {item.summary && <p className="text-sm text-muted-foreground">{item.summary}</p>}
               {contentsLine(item) && <p className="text-xs text-muted-foreground">Includes {contentsLine(item)}</p>}
+              {item.contents.menu.length > 0 && (
+                <p className="text-xs text-muted-foreground">Adds to your menu: {item.contents.menu.join(", ")}</p>
+              )}
               {item.updateAvailable && item.updateChangelog && (
                 <p className="rounded-md bg-muted px-3 py-2 text-xs">{item.updateChangelog}</p>
               )}

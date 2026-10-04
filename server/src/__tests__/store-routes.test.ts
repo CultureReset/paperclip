@@ -48,7 +48,7 @@ describeEmbeddedPostgres("store", () => {
 
   afterEach(async () => {
     // Installing content touches agents, routines, skills and the activity log, so clear by cascade.
-    await db.execute(sql`TRUNCATE companies, store_items, plugins CASCADE`);
+    await db.execute(sql`TRUNCATE companies, store_items, store_settings, plugins CASCADE`);
   });
 
   afterAll(async () => {
@@ -243,6 +243,41 @@ describeEmbeddedPostgres("store", () => {
     expect((await agentsIn(companyA))[0].status).toBe("terminated");
     expect((await skillKeysIn(companyA)).filter((key) => key.startsWith("store/"))).toEqual([]);
     expect(await db.select().from(storeInstallResources).where(and(eq(storeInstallResources.companyId, companyA)))).toEqual([]);
+  });
+
+  it("shows the core menu to everyone and the rest only once an install turns it on", async () => {
+    const companyA = await seedCompany("MNA", [{ userId: "alice", role: "owner" }]);
+    const companyB = await seedCompany("MNB", [{ userId: "bob", role: "owner" }]);
+    const menuOf = async (userId: string, companyId: string) =>
+      (await request(appAs(member(userId, companyId))).get(`/api/companies/${companyId}/menu`).expect(200)).body.visible;
+
+    expect(await menuOf("alice", companyA)).toEqual(["search", "dashboard", "inbox", "store", "settings"]);
+
+    const app = appAs(admin);
+    const item = (await request(app).post("/api/store/admin/items").send({ key: "crew", kind: "pack", name: "Crew" }).expect(201)).body;
+    await request(app)
+      .post(`/api/store/admin/items/${item.id}/versions`)
+      .send({ version: "1.0.0", payload: { menu: ["nope"] } })
+      .expect(400);
+    await request(app)
+      .post(`/api/store/admin/items/${item.id}/versions`)
+      .send({ version: "1.0.0", payload: { menu: ["tasks"], agents: [{ key: "mate", name: "First Mate", adapterType: "process" }] } })
+      .expect(201);
+    await request(app).post(`/api/store/admin/items/${item.id}/publish`).expect(200);
+    await request(appAs(member("alice", companyA))).post(`/api/companies/${companyA}/store/${item.id}/install`).expect(201);
+
+    expect(await menuOf("alice", companyA)).toEqual(expect.arrayContaining(["tasks", "agents"]));
+    expect(await menuOf("bob", companyB)).not.toContain("tasks");
+
+    // Only the platform admin sets the core menu, and Store and Settings can't be taken away.
+    await request(appAs(member("alice", companyA))).put("/api/store/admin/menu").send({ core: ["tasks"] }).expect(403);
+    await request(app).put("/api/store/admin/menu").send({ core: ["bogus"] }).expect(400);
+    expect((await request(app).put("/api/store/admin/menu").send({ core: ["dashboard"] }).expect(200)).body.core)
+      .toEqual(["dashboard", "store", "settings"]);
+    expect(await menuOf("bob", companyB)).toEqual(["dashboard", "store", "settings"]);
+
+    await request(appAs(member("alice", companyA))).delete(`/api/companies/${companyA}/store/${item.id}`).expect(204);
+    expect(await menuOf("alice", companyA)).toEqual(["dashboard", "store", "settings"]);
   });
 
   it("shows a store plugin only inside companies that installed it", async () => {

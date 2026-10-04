@@ -1,5 +1,6 @@
 import { useUserPreferences } from "../hooks/useUserPreferences";
 import { ChatSetupSidebarProvider } from "@/context/ChatSetupSidebarContext";
+import { MenuVisibilityProvider } from "@/context/MenuVisibilityContext";
 import { PluginAppShellOverlays } from "./PluginAppShellOverlays";
 import {
   useCallback,
@@ -633,6 +634,7 @@ export function Layout() {
 
   return (
     <ChatSetupSidebarProvider>
+    <MenuVisibilityProvider>
     <GeneralSettingsProvider value={{ keyboardShortcutsEnabled }}>
       <div
         className={cn(
@@ -785,6 +787,7 @@ export function Layout() {
         <PluginAppShellOverlays localTrusted={health?.deploymentMode === "local_trusted"} />
       </div>
     </GeneralSettingsProvider>
+    </MenuVisibilityProvider>
     </ChatSetupSidebarProvider>
   );
 }

@@ -4,6 +4,7 @@ import { storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { pluginRegistryService } from "./plugin-registry.js";
 import { parseStorePayload, storeContentService } from "./store-content.js";
+import { MENU_CATALOG, menuFromPayload } from "./store-menu.js";
 
 export const STORE_ITEM_KINDS = ["plugin", "pack", "skill", "automation", "connector"] as const;
 export type StoreItemKind = (typeof STORE_ITEM_KINDS)[number];
@@ -267,6 +268,7 @@ export function storeService(db: Db) {
           skills: shown?.skills?.length ?? 0,
           agents: shown?.agents?.length ?? 0,
           routines: shown?.routines?.length ?? 0,
+          menu: menuFromPayload(shown).map((key) => MENU_CATALOG.find((entry) => entry.key === key)?.label ?? key),
         };
         return {
           id: item.id,

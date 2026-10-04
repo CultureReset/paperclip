@@ -11,6 +11,7 @@ import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import { companySkillService } from "./company-skills.js";
 import { routineService } from "./routines.js";
+import { MENU_KEYS } from "./store-menu.js";
 
 const resourceKey = z.string().trim().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/, "Use lowercase letters, numbers and dashes");
 
@@ -20,6 +21,8 @@ const resourceKey = z.string().trim().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$
  */
 export const storePayloadSchema = z
   .object({
+    /** Menu entries this item turns on, beyond the ones its agents, routines and skills need. */
+    menu: z.array(z.enum(MENU_KEYS)).default([]),
     skills: z
       .array(
         z.object({

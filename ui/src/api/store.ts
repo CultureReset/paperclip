@@ -52,7 +52,7 @@ export interface StoreListing {
   updateAvailable: boolean;
   updateAdvisory: StoreAdvisoryType | null;
   updateChangelog: string | null;
-  contents: { skills: number; agents: number; routines: number };
+  contents: { skills: number; agents: number; routines: number; menu: string[] };
 }
 
 export interface StoreRelease {
@@ -78,6 +78,18 @@ export interface StoreItemCreate {
   pluginKey?: string | null;
 }
 
+export interface MenuEntry {
+  key: string;
+  label: string;
+  paths: string[];
+}
+
+export interface CompanyMenu {
+  catalog: MenuEntry[];
+  core: string[];
+  visible: string[];
+}
+
 export const storeApi = {
   // Platform admin
   listAll: () => api.get<StoreAdminItem[]>("/store/admin/items"),
@@ -87,7 +99,11 @@ export const storeApi = {
   publish: (itemId: string) => api.post<StoreAdminItem>(`/store/admin/items/${itemId}/publish`, {}),
   retire: (itemId: string) => api.post<StoreAdminItem>(`/store/admin/items/${itemId}/retire`, {}),
 
+  menuSettings: () => api.get<{ catalog: MenuEntry[]; core: string[] }>("/store/admin/menu"),
+  setCoreMenu: (core: string[]) => api.put<{ core: string[] }>("/store/admin/menu", { core }),
+
   // Company
+  menu: (companyId: string) => api.get<CompanyMenu>(`/companies/${companyId}/menu`),
   list: (companyId: string) => api.get<StoreListing[]>(`/companies/${companyId}/store`),
   install: (companyId: string, itemId: string, subscription: StoreSubscription = {}) =>
     api.post<unknown>(`/companies/${companyId}/store/${itemId}/install`, subscription),

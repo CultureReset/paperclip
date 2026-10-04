@@ -127,3 +127,15 @@ export const storeInstallResources = pgTable(
     ),
   }),
 );
+
+/**
+ * Platform-wide store settings, one row. `coreMenu` lists the menu entries
+ * every company sees; everything else appears only once an installed item
+ * turns it on.
+ */
+export const storeSettings = pgTable("store_settings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  singletonKey: text("singleton_key").notNull().default("default").unique(),
+  coreMenu: jsonb("core_menu").$type<string[]>(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});

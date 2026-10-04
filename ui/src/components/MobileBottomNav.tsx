@@ -1,3 +1,4 @@
+import { useMenuVisible } from "@/context/MenuVisibilityContext";
 import { useMemo } from "react";
 import { NavLink, useLocation } from "@/lib/router";
 import {
@@ -6,6 +7,7 @@ import {
   SquarePen,
   Users,
   Inbox,
+  Store as StoreIcon,
 } from "lucide-react";
 import { useCompany } from "../context/CompanyContext";
 import { useDialogActions } from "../context/DialogContext";
@@ -41,21 +43,29 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
   const { openNewIssue } = useDialogActions();
   const inboxBadge = useInboxBadge(selectedCompanyId);
 
+  const isMenuVisible = useMenuVisible();
   const items = useMemo<MobileNavItem[]>(
-    () => [
-      { type: "link", to: "/dashboard", label: "Home", icon: House },
-      { type: "link", to: "/issues", label: "Tasks", icon: CircleCheck },
-      { type: "action", label: "New Task", icon: SquarePen, onClick: () => openNewIssue() },
-      { type: "link", to: "/agents/all", label: "Agents", icon: Users },
-      {
-        type: "link",
-        to: "/inbox",
-        label: "Inbox",
-        icon: Inbox,
-        badge: inboxBadge.inbox,
-      },
-    ],
-    [openNewIssue, inboxBadge.inbox],
+    () => {
+      const all: Array<MobileNavItem & { gate: string }> = [
+        { type: "link", to: "/dashboard", label: "Home", icon: House, gate: "/dashboard" },
+        { type: "link", to: "/issues", label: "Tasks", icon: CircleCheck, gate: "/issues" },
+        { type: "action", label: "New Task", icon: SquarePen, onClick: () => openNewIssue(), gate: "/issues" },
+        { type: "link", to: "/agents/all", label: "Agents", icon: Users, gate: "/agents" },
+        {
+          type: "link",
+          to: "/inbox",
+          label: "Inbox",
+          icon: Inbox,
+          badge: inboxBadge.inbox,
+          gate: "/inbox",
+        },
+      ];
+      const shown: MobileNavItem[] = all.filter((item) => isMenuVisible(item.gate));
+      // A company with a short menu gets the Store in the spare slot.
+      if (shown.length < 5) shown.push({ type: "link", to: "/store", label: "Store", icon: StoreIcon });
+      return shown;
+    },
+    [openNewIssue, inboxBadge.inbox, isMenuVisible],
   );
 
   return (
@@ -66,7 +76,7 @@ export function MobileBottomNav({ visible }: MobileBottomNavProps) {
       )}
       aria-label="Mobile navigation"
     >
-      <div className="grid h-16 grid-cols-5 px-1">
+      <div className="grid h-16 px-1" style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}>
         {items.map((item) => {
           if (item.type === "action") {
             const Icon = item.icon;

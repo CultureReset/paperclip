@@ -1,3 +1,4 @@
+import { useAnyMenuVisible, useMenuVisible } from "@/context/MenuVisibilityContext";
 import {
   Inbox,
   ListChecks,
@@ -44,6 +45,8 @@ import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu.production";
+
+const WORK_MENU_PATHS = ["/issues", "/projects", "/routines", "/artifacts", "/cases", "/pipelines", "/goals", "/skills", "/workspaces"];
 
 export function Sidebar() {
   const { openNewIssue } = useDialogActions();
@@ -113,6 +116,26 @@ export function Sidebar() {
     companyPrefix: selectedCompany?.issuePrefix ?? null,
   };
 
+  const isMenuVisible = useMenuVisible();
+  const showWorkSection = useAnyMenuVisible(WORK_MENU_PATHS);
+  const workPluginOutlets = (
+    <>
+      <PluginSlotOutlet
+        slotTypes={["sidebar"]}
+        context={pluginContext}
+        className="flex flex-col gap-0.5"
+        itemClassName="text-(length:--text-compact) font-medium"
+        missingBehavior="placeholder"
+      />
+      <PluginLauncherOutlet
+        placementZones={["sidebar"]}
+        context={pluginContext}
+        className="flex flex-col gap-0.5"
+        itemClassName="text-(length:--text-compact) font-medium"
+      />
+    </>
+  );
+
   return (
     <aside className="w-full h-full min-h-0 border-r border-border bg-background flex flex-col">
       {/* Top bar: company name, aligned with top sections and borderless.
@@ -126,8 +149,8 @@ export function Sidebar() {
 
       <nav className="flex-1 min-h-0 overflow-y-auto scrollbar-auto-hide flex flex-col gap-4 pointer-coarse:gap-3 px-3 py-2">
         <div className="flex flex-col gap-0.5">
-          {/* New Task button aligned with nav items */}
-          {(() => {
+          {/* New Task button aligned with nav items; only when the company has Tasks. */}
+          {isMenuVisible("/issues") && (() => {
             const newTaskButton = (
               <button
                 onClick={() => openNewIssue()}
@@ -181,6 +204,7 @@ export function Sidebar() {
           ) : null}
         </div>
 
+        {showWorkSection ? (
         <SidebarSection label="Work" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
           <SidebarNavItem to="/issues" label="Tasks" icon={CircleDot} />
           {showCases ? (
@@ -207,28 +231,19 @@ export function Sidebar() {
           {streamlined ? (
             <>
               <SidebarNavItem to="/projects" label="Projects" icon={FolderOpen} />
-              <SidebarStarredProjects />
+              {isMenuVisible("/projects") ? <SidebarStarredProjects /> : null}
             </>
           ) : null}
-          <PluginSlotOutlet
-            slotTypes={["sidebar"]}
-            context={pluginContext}
-            className="flex flex-col gap-0.5"
-            itemClassName="text-(length:--text-compact) font-medium"
-            missingBehavior="placeholder"
-          />
-          <PluginLauncherOutlet
-            placementZones={["sidebar"]}
-            context={pluginContext}
-            className="flex flex-col gap-0.5"
-            itemClassName="text-(length:--text-compact) font-medium"
-          />
+          {workPluginOutlets}
         </SidebarSection>
+        ) : (
+          <div className="flex flex-col gap-0.5">{workPluginOutlets}</div>
+        )}
 
         {/* Classic mode restores the per-project collapsible below Work. */}
-        {streamlined ? null : <SidebarProjects />}
+        {streamlined || !isMenuVisible("/projects") ? null : <SidebarProjects />}
 
-        <SidebarAgents streamlined={streamlined} />
+        {isMenuVisible("/agents") ? <SidebarAgents streamlined={streamlined} /> : null}
 
         <SidebarSection label="Company" collapsible={{ open: companyOpen, onOpenChange: setCompanyOpen }}>
           <SidebarNavItem to="/org" label="Org" icon={Network} />

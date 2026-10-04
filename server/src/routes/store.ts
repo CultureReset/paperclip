@@ -12,6 +12,7 @@ import {
   STORE_ITEM_KINDS,
   storeService,
 } from "../services/store.js";
+import { MENU_CATALOG, MENU_KEYS, storeMenuService } from "../services/store-menu.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin } from "./authz.js";
 
 const itemKeySchema = z.string().trim().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/, "Use lowercase letters, numbers and dashes");
@@ -42,6 +43,8 @@ const addVersionSchema = z.object({
   payload: z.record(z.string(), z.unknown()).optional(),
 });
 
+const coreMenuSchema = z.object({ core: z.array(z.enum(MENU_KEYS)) });
+
 const subscriptionSchema = z
   .object({
     channel: z.enum(STORE_CHANNELS).optional(),
@@ -66,6 +69,7 @@ export function storeRoutes(db: Db) {
   const router = Router();
   const store = storeService(db);
   const access = accessService(db);
+  const menu = storeMenuService(db);
 
   // ----- Platform admin: publish ---------------------------------------
 
@@ -99,7 +103,23 @@ export function storeRoutes(db: Db) {
     res.json(await store.retire(req.params.itemId as string));
   });
 
+  router.get("/store/admin/menu", async (req, res) => {
+    assertInstanceAdmin(req);
+    res.json({ catalog: MENU_CATALOG, core: await menu.coreMenu() });
+  });
+
+  router.put("/store/admin/menu", validate(coreMenuSchema), async (req, res) => {
+    assertInstanceAdmin(req);
+    res.json({ core: await menu.setCoreMenu(req.body.core) });
+  });
+
   // ----- Company: browse and install -----------------------------------
+
+  router.get("/companies/:companyId/menu", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json(await menu.visibleFor(companyId));
+  });
 
   router.get("/companies/:companyId/store", async (req, res) => {
     const companyId = req.params.companyId as string;

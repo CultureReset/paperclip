@@ -1,3 +1,4 @@
+import { useAnyMenuVisible, useMenuVisible } from "@/context/MenuVisibilityContext";
 import {
   Inbox,
   ListChecks,
@@ -50,6 +51,9 @@ import { PluginSlotOutlet } from "@/plugins/slots";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 import { primarySidebarStyles } from "./primary-sidebar-styles";
+
+const WORK_MENU_PATHS = ["/issues", "/projects", "/routines", "/artifacts", "/cases", "/pipelines", "/goals", "/skills", "/workspaces"];
+const ORG_MENU_PATHS = ["/agents", "/skills", "/apps", "/activity"];
 
 export function Sidebar({ children }: { children?: ReactNode }) {
   const { openNewIssue } = useDialogActions();
@@ -117,6 +121,27 @@ export function Sidebar({ children }: { children?: ReactNode }) {
     companyPrefix: selectedCompany?.issuePrefix ?? null,
   };
 
+  const isMenuVisible = useMenuVisible();
+  const showWorkSection = useAnyMenuVisible(WORK_MENU_PATHS);
+  const showOrgSection = useAnyMenuVisible(ORG_MENU_PATHS);
+  const workPluginOutlets = (
+    <>
+      <PluginSlotOutlet
+        slotTypes={["sidebar"]}
+        context={pluginContext}
+        className="flex flex-col gap-0.5"
+        itemClassName="text-(length:--text-compact) font-medium"
+        missingBehavior="placeholder"
+      />
+      <PluginLauncherOutlet
+        placementZones={["sidebar"]}
+        context={pluginContext}
+        className="flex flex-col gap-0.5"
+        itemClassName="text-(length:--text-compact) font-medium"
+      />
+    </>
+  );
+
   return (
     <aside
       className={cn(
@@ -137,8 +162,8 @@ export function Sidebar({ children }: { children?: ReactNode }) {
 
       <nav className={primarySidebarStyles.nav}>
         <div className={primarySidebarStyles.group}>
-          {/* New Task button aligned with nav items */}
-          {(() => {
+          {/* New Task button aligned with nav items; only when the company has Tasks. */}
+          {isMenuVisible("/issues") && (() => {
             const newTaskButton = (
               <button
                 onClick={() => openNewIssue()}
@@ -194,12 +219,13 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           ) : null}
         </div>
 
+        {showWorkSection ? (
         <SidebarSection label="Work" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
           <SidebarNavItem to="/issues" label="Tasks" icon={CircleCheck} />
           {streamlinedUiEnabled ? (
             <>
               <SidebarNavItem to="/projects" label="Projects" icon={FolderOpen} />
-              <SidebarStarredProjects />
+              {isMenuVisible("/projects") ? <SidebarStarredProjects /> : null}
             </>
           ) : null}
           <SidebarNavItem to="/routines" label="Routines" icon={Repeat} />
@@ -222,22 +248,13 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           {showWorkspacesLink ? (
             <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />
           ) : null}
-          <PluginSlotOutlet
-            slotTypes={["sidebar"]}
-            context={pluginContext}
-            className="flex flex-col gap-0.5"
-            itemClassName="text-(length:--text-compact) font-medium"
-            missingBehavior="placeholder"
-          />
-          <PluginLauncherOutlet
-            placementZones={["sidebar"]}
-            context={pluginContext}
-            className="flex flex-col gap-0.5"
-            itemClassName="text-(length:--text-compact) font-medium"
-          />
+          {workPluginOutlets}
         </SidebarSection>
+        ) : (
+          <div className="flex flex-col gap-0.5">{workPluginOutlets}</div>
+        )}
 
-        {streamlinedUiEnabled ? (
+        {streamlinedUiEnabled && showOrgSection ? (
           <SidebarSection
             label="Org"
             collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
@@ -253,11 +270,11 @@ export function Sidebar({ children }: { children?: ReactNode }) {
         {agentChatEnabled && !children && <SidebarAgentChats />}
 
         {streamlinedUiEnabled ? (
-          <SidebarRecentTasks companyId={selectedCompanyId} liveIssueIds={liveIssueIds} />
+          isMenuVisible("/issues") ? <SidebarRecentTasks companyId={selectedCompanyId} liveIssueIds={liveIssueIds} /> : null
         ) : (
           <>
-            <SidebarProjects />
-            <SidebarAgents />
+            {isMenuVisible("/projects") ? <SidebarProjects /> : null}
+            {isMenuVisible("/agents") ? <SidebarAgents /> : null}
             <SidebarSection
               label="Organization"
               collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}

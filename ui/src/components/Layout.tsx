@@ -1,6 +1,7 @@
 import { useUserPreferences } from "../hooks/useUserPreferences";
 import { SetupWizardSidebarOutlet } from "./SetupWizard";
 import { ChatSetupSidebarProvider } from "@/context/ChatSetupSidebarContext";
+import { MenuVisibilityProvider } from "@/context/MenuVisibilityContext";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, useLocation, useNavigate, useNavigationType, useParams } from "@/lib/router";
@@ -615,6 +616,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
 
   return (
     <ChatSetupSidebarProvider>
+    <MenuVisibilityProvider>
     <GeneralSettingsProvider value={{ keyboardShortcutsEnabled }}>
       <div
       className={cn(
@@ -789,6 +791,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
       <PluginAppShellOverlays localTrusted={health?.deploymentMode === "local_trusted"} />
       </div>
     </GeneralSettingsProvider>
+    </MenuVisibilityProvider>
     </ChatSetupSidebarProvider>
   );
 }

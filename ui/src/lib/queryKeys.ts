@@ -708,6 +708,8 @@ export const queryKeys = {
   store: {
     admin: ["store", "admin"] as const,
     company: (companyId: string) => ["store", "company", companyId] as const,
+    menu: (companyId: string) => ["store", "menu", companyId] as const,
+    adminMenu: ["store", "admin", "menu"] as const,
   },
   plugins: {
     all: ["plugins"] as const,

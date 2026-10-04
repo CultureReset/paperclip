@@ -29,6 +29,7 @@ const KINDS = Object.keys(STORE_KIND_LABELS) as StoreItemKind[];
 const CONTENTS_EXAMPLE = JSON.stringify(
   {
     skills: [{ key: "booking", name: "Booking", markdown: "# Booking\n\nHow to book a charter." }],
+    menu: ["tasks"],
     agents: [{ key: "receptionist", name: "Receptionist", instructions: "Answer calls and book trips." }],
     routines: [{ key: "morning", title: "Morning check", agentKey: "receptionist", cron: "0 8 * * *" }],
   },
@@ -136,11 +137,72 @@ export function StoreAdmin() {
         </Card>
       )}
 
+      <CoreMenuCard />
+
       <CreateItemDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={refresh} onError={onError} />
       <NewVersionDialog item={versionFor} onClose={() => setVersionFor(null)} onSaved={refresh} onError={onError} />
     </div>
   );
 }
+
+/** Which menu entries every company sees before installing anything. */
+function CoreMenuCard() {
+  const { pushToast } = useToastActions();
+  const queryClient = useQueryClient();
+  const menuQuery = useQuery({ queryKey: queryKeys.store.adminMenu, queryFn: () => storeApi.menuSettings() });
+  const [core, setCore] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (menuQuery.data) setCore(menuQuery.data.core);
+  }, [menuQuery.data]);
+
+  const save = useMutation({
+    mutationFn: () => storeApi.setCoreMenu(core ?? []),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["store"] });
+      pushToast({ title: "Core menu saved", tone: "success" });
+    },
+    onError: (err: Error) => pushToast({ title: "Could not save the core menu", body: err.message, tone: "error" }),
+  });
+
+  if (!menuQuery.data || !core) return null;
+  const locked = new Set(LOCKED_MENU);
+  const dirty = core.slice().sort().join() !== menuQuery.data.core.slice().sort().join();
+
+  return (
+    <Card>
+      <CardContent className="space-y-4 p-4">
+        <div>
+          <h2 className="font-medium">Core menu</h2>
+          <p className="text-sm text-muted-foreground">
+            Every company sees these. Everything else shows up only after a company installs something that turns it on.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          {menuQuery.data.catalog.map((entry) => (
+            <label key={entry.key} className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={core.includes(entry.key)}
+                disabled={locked.has(entry.key)}
+                onCheckedChange={(value) =>
+                  setCore((current) =>
+                    value === true ? [...(current ?? []), entry.key] : (current ?? []).filter((key) => key !== entry.key),
+                  )
+                }
+              />
+              {entry.label}
+            </label>
+          ))}
+        </div>
+        <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
+          {save.isPending ? "Saving..." : "Save core menu"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Store and Settings are always on; the server enforces the same. */
+const LOCKED_MENU = ["store", "settings"];
 
 function CreateItemDialog({
   open,
@@ -374,8 +436,8 @@ function NewVersionDialog({
                 placeholder={CONTENTS_EXAMPLE}
               />
               <p className="text-xs text-muted-foreground">
-                The skills, agents and routines a company gets. Anything you leave out of a release is removed from
-                companies when they take it.
+                The skills, agents and routines a company gets, plus any extra menu entries it turns on. Anything you
+                leave out of a release is removed from companies when they take it.
               </p>
               {contentsError && <p className="text-xs text-destructive">{contentsError}</p>}
             </div>
