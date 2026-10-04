@@ -72,7 +72,7 @@ function fakeUpstream(answers: Record<string, (body: Record<string, unknown> | n
     const method = init.method ?? "GET";
     const body = init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
     calls.push({ method, url, body });
-    const key = `${method} ${parsed.pathname.replace(/\/api\/nextgent\/installs\/[^/]+$/, "/api/nextgent/installs/:id")}`;
+    const key = `${method} ${parsed.pathname.replace(/\/api\/nextgent\/installs\/[^/]+(\/session)?$/, "/api/nextgent/installs/:id$1")}`;
     const answer = answers[key];
     if (!answer) return new Response(JSON.stringify({ error: `unexpected ${key}` }), { status: 500 });
     const result = answer(body);
@@ -301,12 +301,14 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       expect(after.configJson).toEqual({ apiBaseUrl: GCR });
     });
 
-    it("hands an installed app's token only to members of its company", async () => {
+    it("hands an installed app a short-lived session token, never the stored install token, and only to members of its company", async () => {
       const companyId = await seedCompany("TOK");
       const otherCompany = await seedCompany("TOX");
-      const { fetch } = fakeUpstream({
+      const expiresAt = new Date(Date.now() + 120_000).toISOString();
+      const { calls, fetch } = fakeUpstream({
         "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
         "POST /api/nextgent/installs": () => ({ body: { token: "install-scoped-token" } }),
+        "POST /api/nextgent/installs/:id/session": () => ({ status: 201, body: { token: "gcr_mcp_ist.session", expiresAt } }),
       });
       const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
       const item = await publish(store, "booker", "pack", agentRelease);
@@ -315,14 +317,26 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
         const server = express();
         server.use(express.json());
         server.use((req, _res, next) => { (req as unknown as { actor: unknown }).actor = actor; next(); });
-        server.use("/api", nextgentRoutes(db, { config: configWith() }));
+        server.use("/api", nextgentRoutes(db, { config: configWith(), fetch }));
         server.use(errorHandler);
         return server;
       };
       const owner = { type: "board", source: "session", userId: "owner-TOK", companyIds: [companyId], isInstanceAdmin: false };
       const res = await request(app(owner)).post(`/api/companies/${companyId}/installs/${install.id}/token`);
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ token: "install-scoped-token", expiresAt: null });
+      // The browser gets gcr-api-clean's short-lived install session, scoped to this install.
+      expect(res.body).toEqual({ token: "gcr_mcp_ist.session", expiresAt });
+      expect(JSON.stringify(res.body)).not.toContain("install-scoped-token");
+      expect(calls.at(-1)).toMatchObject({ method: "POST", url: `${GCR}/api/nextgent/installs/${install.id}/session`, body: { companyId } });
+      // A stored install token alone is never enough: without gcr-api-clean, no token goes out.
+      const offline = express();
+      offline.use(express.json());
+      offline.use((req, _res, next) => { (req as unknown as { actor: unknown }).actor = owner; next(); });
+      offline.use("/api", nextgentRoutes(db, { config: configWith({ gcrApiUrl: null }) }));
+      offline.use(errorHandler);
+      const noGcr = await request(offline).post(`/api/companies/${companyId}/installs/${install.id}/token`);
+      expect(noGcr.status).toBe(503);
+      expect(JSON.stringify(noGcr.body)).not.toContain("install-scoped-token");
       const outsider = { type: "board", source: "session", userId: "owner-TOX", companyIds: [otherCompany], isInstanceAdmin: false };
       expect((await request(app(outsider)).post(`/api/companies/${companyId}/installs/${install.id}/token`)).status).toBe(403);
       expect((await request(app({ ...owner, userId: "owner-TOX" })).post(`/api/companies/${companyId}/installs/${randomUUID()}/token`)).status).toBe(403);

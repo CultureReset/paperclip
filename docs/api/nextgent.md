@@ -206,10 +206,13 @@ and `charged` (whether gcr-api-clean billed it now).
 POST /api/companies/{companyId}/installs/{installId}/token
 ```
 
-Members (not viewers). The install's own business-data token for the screen
-that draws an installed app: `{ "token": "…", "expiresAt": null }`. It can only
-touch what the owner approved and is revoked on uninstall. gcr-api-clean has
-no short-lived mint for install tokens yet, so this is the install token itself.
+Members (not viewers). A short-lived session token for the screen that draws
+an installed app: `{ "token": "…", "expiresAt": "…" }`, minted by
+gcr-api-clean's signed `POST /api/nextgent/installs/{installId}/session` (at
+most 300 s). It can only touch what the owner approved for that install and
+dies with the install. The install's long-lived token stays a server-side
+secret and is never sent to a browser; without `GCR_API_URL` and
+`NEXTGENT_SERVICE_SECRET` the route answers `503`.
 
 ```
 POST /api/companies/{companyId}/store/{itemId}/enable

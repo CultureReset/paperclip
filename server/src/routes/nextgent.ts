@@ -4,7 +4,6 @@ import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import { companies, storeInstalls } from "@paperclipai/db";
 import { isUuidLike } from "@paperclipai/shared";
-import { secretService } from "../services/secrets.js";
 import { conflict, forbidden, HttpError, notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { accessService } from "../services/access.js";
@@ -12,7 +11,7 @@ import { normalizeHumanRole } from "../services/company-member-roles.js";
 import { businessTokenJwks, signBusinessToken, type BusinessTokenRole } from "../services/nextgent-business-jwt.js";
 import { nextgentBusinessLinkService } from "../services/nextgent-business-link.js";
 import { readNextgentConfig, type NextgentConfig } from "../services/nextgent-config.js";
-import { upstreamDetails, type FetchLike } from "../services/nextgent-gcr-client.js";
+import { gcrClient, upstreamDetails, type FetchLike } from "../services/nextgent-gcr-client.js";
 import {
   nextgentConversationSchema,
   nextgentInboundService,
@@ -123,6 +122,7 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
   const config = options.config ?? readNextgentConfig();
   const links = nextgentBusinessLinkService(db, { config, fetch: options.fetch });
   const inbound = nextgentInboundService(db, { config });
+  const gcr = gcrClient({ config, fetch: options.fetch });
 
   router.post("/companies/:companyId/business-token", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -161,10 +161,11 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
   });
 
   /**
-   * An installed app's own business-data token, for the screen that draws it
-   * (it can only touch what the owner approved for that install). gcr-api-clean
-   * has no short-lived mint for install tokens yet, so this is the install's
-   * token itself (`expiresAt: null`), revoked when the app is uninstalled.
+   * An installed app's business-data token for the screen that draws it: a
+   * short-lived session token gcr-api-clean mints for that one install (it
+   * can only touch what the owner approved for it, and dies with the
+   * install). The install's long-lived token stays a server-side secret and
+   * is never sent to a browser.
    */
   router.post("/companies/:companyId/installs/:installId/token", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -179,9 +180,15 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
     if (!install) throw notFound("Install not found");
     if (!install.enabled) throw conflict("This install is switched off");
     if (!install.tokenSecretId) throw notFound("This install has no business-data token");
-    const token = await secretService(db).resolveSecretValue(companyId, install.tokenSecretId, "latest");
-    res.set("Cache-Control", "no-store");
-    res.json({ token, expiresAt: null });
+    if (!gcr.configured) throw new HttpError(503, "GCR_API_URL and NEXTGENT_SERVICE_SECRET must be set to issue install tokens");
+    await withUpstreamDetails(res, async () => {
+      const session = await gcr.installSession(install.id, companyId);
+      if (typeof session?.token !== "string" || !session.token || typeof session.expiresAt !== "string" || !session.expiresAt) {
+        throw new HttpError(502, "gcr-api-clean returned an incomplete install session");
+      }
+      res.set("Cache-Control", "no-store");
+      res.json({ token: session.token, expiresAt: session.expiresAt });
+    });
   });
 
   /** Receipts for real-world actions in this company, newest first (any member). */

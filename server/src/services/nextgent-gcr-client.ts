@@ -129,6 +129,13 @@ export function gcrClient(options: { config?: NextgentConfig; fetch?: FetchLike 
       ),
     uninstall: (installId: string) =>
       call<Record<string, unknown>>("DELETE", `/api/nextgent/installs/${encodeURIComponent(installId)}`),
+    /**
+     * A short-lived session token for one install (at most 300 s, minted by
+     * gcr-api-clean), for the screen that draws an installed app. The
+     * long-lived install token itself never leaves this server.
+     */
+    installSession: (installId: string, companyId: string) =>
+      call<{ token?: string; expiresAt?: string }>("POST", `/api/nextgent/installs/${encodeURIComponent(installId)}/session`, { companyId }),
     /** A platform email from one of gcr-api-clean's templates (e.g. a team invite). */
     sendEmail: (input: { companyId?: string; to: string; template: string; data: Record<string, unknown> }) =>
       call<{ sent?: boolean }>("POST", "/api/nextgent/email", input),
