@@ -24,6 +24,7 @@ const config: NextgentConfig = {
   assistant: { name: null, instructionsFile: null, adapterType: null },
   platformCompanyId: null,
   businessTokenTtlSeconds: 300,
+  storePricing: { models: [], intervals: [], defaultCurrency: null },
 };
 
 /** Minimal db: every select returns `rows`. */
@@ -105,6 +106,21 @@ describe("POST /api/companies/:companyId/business-token", () => {
     const res = await request(await appAs({ type: "agent", agentId: "a1", companyId: "company-1" })).post(
       "/api/companies/company-1/business-token",
     );
+    expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/admin/business-token (contract §12)", () => {
+  it("gives an instance admin a token with no company", async () => {
+    const res = await request(await appAs(session("admin", { isInstanceAdmin: true, companyIds: [] }))).post("/api/admin/business-token");
+    expect(res.status).toBe(200);
+    const claims = claimsOf(res.body.token);
+    expect(claims).toMatchObject({ sub: "admin", role: "instance_admin", aud: "gcr-api-clean" });
+    expect(claims).not.toHaveProperty("company_id");
+  });
+
+  it("refuses everyone else", async () => {
+    const res = await request(await appAs(session("user-1"))).post("/api/admin/business-token");
     expect(res.status).toBe(403);
   });
 });

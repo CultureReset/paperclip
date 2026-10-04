@@ -21,7 +21,7 @@ import {
   NEXTGENT_TIMESTAMP_HEADER,
   verifyNextgentSignature,
 } from "../services/nextgent-service-signing.js";
-import { assertBoard } from "./authz.js";
+import { assertBoard, assertCompanyAccess, assertInstanceAdmin } from "./authz.js";
 
 export interface NextgentRouteOptions {
   config?: NextgentConfig;
@@ -120,6 +120,7 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
   const router = Router();
   const config = options.config ?? readNextgentConfig();
   const links = nextgentBusinessLinkService(db, { config, fetch: options.fetch });
+  const inbound = nextgentInboundService(db, { config });
 
   router.post("/companies/:companyId/business-token", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -134,6 +135,37 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
     });
     res.set("Cache-Control", "no-store");
     res.json({ token, expiresAt });
+  });
+
+  /**
+   * Contract §12: an instance-admin token with no company, for Plat-admin's
+   * fleet-wide and admin screens. gcr-api-clean honours it only for ids it
+   * lists in platform_admins, and admin routes still name the slug.
+   */
+  router.post("/admin/business-token", async (req, res) => {
+    assertInstanceAdmin(req);
+    if (!config.publicUrl) throw new HttpError(503, "PAPERCLIP_PUBLIC_URL must be set to issue business tokens");
+    const userId = req.actor.userId;
+    if (!userId) throw forbidden("A signed-in user is required");
+    const { token, expiresAt } = signBusinessToken({
+      issuer: config.publicUrl,
+      userId,
+      companyId: null,
+      role: "instance_admin",
+      ttlSeconds: config.businessTokenTtlSeconds,
+    });
+    res.set("Cache-Control", "no-store");
+    res.json({ token, expiresAt });
+  });
+
+  /** Receipts for real-world actions in this company, newest first (any member). */
+  router.get("/companies/:companyId/receipts", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    const limit = Math.min(Math.max(Number.parseInt(String(req.query.limit ?? ""), 10) || 50, 1), 200);
+    const offset = Math.max(Number.parseInt(String(req.query.offset ?? ""), 10) || 0, 0);
+    res.json(await inbound.listReceipts(companyId, { limit, offset }));
   });
 
   router.get("/companies/:companyId/business-link", async (req, res) => {

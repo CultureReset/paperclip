@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
-import { companies, issues } from "@paperclipai/db";
+import { activityLog, companies, issues } from "@paperclipai/db";
 import { isUuidLike } from "@paperclipai/shared";
 import { notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -34,6 +34,9 @@ export const nextgentConversationSchema = z.object({
   outcome: z.string().nullish(),
 });
 export type NextgentConversation = z.infer<typeof nextgentConversationSchema>;
+
+/** Activity action receipts are stored under. */
+export const RECEIPT_ACTION = "nextgent.receipt";
 
 /** The conversations endpoint accepts this literal in place of a company id: NEXT GENT's own company. */
 export const NEXTGENT_PLATFORM_COMPANY_ALIAS = "nextgent";
@@ -70,6 +73,49 @@ export function nextgentInboundService(db: Db, options: { config?: NextgentConfi
   }
 
   return {
+    /**
+     * Receipts recorded for a company, newest first: the contract §5 fields,
+     * the receipt id, and the task it is attached to (id and identifier).
+     */
+    async listReceipts(companyId: string, page: { limit: number; offset: number }) {
+      const where = and(eq(activityLog.companyId, companyId), eq(activityLog.action, RECEIPT_ACTION));
+      const [{ total }] = await db.select({ total: count() }).from(activityLog).where(where);
+      const rows = await db
+        .select({ id: activityLog.id, details: activityLog.details, createdAt: activityLog.createdAt, entityType: activityLog.entityType, entityId: activityLog.entityId })
+        .from(activityLog)
+        .where(where)
+        .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
+        .limit(page.limit)
+        .offset(page.offset);
+      const taskIdOf = (row: (typeof rows)[number]) => (row.entityType === "issue" ? row.entityId : null);
+      const taskIds = [...new Set(rows.map(taskIdOf).filter((id): id is string => Boolean(id)))];
+      const tasks = taskIds.length
+        ? await db.select({ id: issues.id, identifier: issues.identifier, title: issues.title }).from(issues).where(and(eq(issues.companyId, companyId), inArray(issues.id, taskIds)))
+        : [];
+      const taskById = new Map(tasks.map((task) => [task.id, task]));
+      const receipts = rows.map((row) => {
+        const d = (row.details ?? {}) as Record<string, unknown>;
+        const taskId = taskIdOf(row);
+        const task = taskId ? taskById.get(taskId) ?? null : null;
+        return {
+          id: typeof d.receiptId === "string" ? d.receiptId : row.id,
+          companyId,
+          taskId: task?.id ?? (typeof d.taskId === "string" ? d.taskId : null),
+          task: task ? { id: task.id, identifier: task.identifier, title: task.title } : null,
+          action: d.action ?? null,
+          target: d.target ?? null,
+          oldValue: d.oldValue ?? null,
+          newValue: d.newValue ?? null,
+          device: d.device ?? null,
+          verified: d.verified === true,
+          at: d.at ?? null,
+          evidence: d.evidence ?? null,
+          recordedAt: row.createdAt,
+        };
+      });
+      return { receipts, total: Number(total), limit: page.limit, offset: page.offset };
+    },
+
     async recordReceipt(receipt: NextgentReceipt) {
       const companyId = await requireCompany(receipt.companyId);
       const task = receipt.taskId ? await findTask(companyId, receipt.taskId) : null;
@@ -90,7 +136,7 @@ export function nextgentInboundService(db: Db, options: { config?: NextgentConfi
         companyId,
         actorType: "system",
         actorId: "nextgent",
-        action: "nextgent.receipt",
+        action: RECEIPT_ACTION,
         entityType: task ? "issue" : "nextgent_receipt",
         entityId: task?.id ?? id,
         issueId: task?.id ?? null,

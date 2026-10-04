@@ -22,7 +22,8 @@ export interface BusinessTokenClaims {
   iss: string;
   aud: typeof BUSINESS_TOKEN_AUDIENCE;
   sub: string;
-  company_id: string;
+  /** Absent on an instance-admin token (contract §12). */
+  company_id?: string;
   role: BusinessTokenRole;
   iat: number;
   exp: number;
@@ -94,7 +95,8 @@ export function businessTokenJwks(): { keys: Record<string, unknown>[] } {
 export function signBusinessToken(input: {
   issuer: string;
   userId: string;
-  companyId: string;
+  /** null for an instance-admin token, which names no company. */
+  companyId: string | null;
   role: BusinessTokenRole;
   ttlSeconds: number;
   nowSeconds?: number;
@@ -106,7 +108,7 @@ export function signBusinessToken(input: {
     iss: input.issuer,
     aud: BUSINESS_TOKEN_AUDIENCE,
     sub: input.userId,
-    company_id: input.companyId,
+    ...(input.companyId ? { company_id: input.companyId } : {}),
     role: input.role,
     iat,
     exp: iat + ttl,
