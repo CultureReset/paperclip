@@ -129,6 +129,27 @@ describe("POST /api/admin/business-token (contract §12)", () => {
   });
 });
 
+describe("startup in production", () => {
+  it("refuses to mount the NEXT GENT routes without NEXTGENT_JWT_PRIVATE_KEY when gcr-api-clean is configured", async () => {
+    const { nextgentPublicRoutes } = await import("../routes/nextgent.js");
+    const { resetBusinessTokenKeyForTests } = await import("../services/nextgent-business-jwt.js");
+    const saved = { NODE_ENV: process.env.NODE_ENV, key: process.env.NEXTGENT_JWT_PRIVATE_KEY };
+    process.env.NODE_ENV = "production";
+    delete process.env.NEXTGENT_JWT_PRIVATE_KEY;
+    resetBusinessTokenKeyForTests();
+    try {
+      expect(() => nextgentPublicRoutes(fakeDb(), { config })).toThrow(/NEXTGENT_JWT_PRIVATE_KEY/);
+      // A server without NEXT GENT wiring (no gcr-api-clean) still starts.
+      expect(() => nextgentPublicRoutes(fakeDb(), { config: { ...config, gcrApiUrl: null } })).not.toThrow();
+    } finally {
+      process.env.NODE_ENV = saved.NODE_ENV;
+      if (saved.key === undefined) delete process.env.NEXTGENT_JWT_PRIVATE_KEY;
+      else process.env.NEXTGENT_JWT_PRIVATE_KEY = saved.key;
+      resetBusinessTokenKeyForTests();
+    }
+  });
+});
+
 describe("GET /.well-known/jwks.json", () => {
   it("publishes the public signing key only", async () => {
     const res = await request(await appAs(null)).get("/.well-known/jwks.json");

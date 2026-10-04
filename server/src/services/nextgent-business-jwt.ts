@@ -10,9 +10,10 @@ import { BUSINESS_TOKEN_MAX_TTL_SECONDS } from "./nextgent-config.js";
  *   claims: { iss, aud: "gcr-api-clean", sub, company_id, role, iat, exp }
  *
  * The private key comes from NEXTGENT_JWT_PRIVATE_KEY (PEM, Ed25519 or RSA).
- * Without it a key is generated at start and a warning logged: fine for dev,
- * wrong for production, since every restart invalidates issued tokens and
- * every server instance would publish a different key.
+ * Without it a key is generated at start and a warning logged, in dev and
+ * test only: in production (NODE_ENV=production) the server refuses, since
+ * every restart would invalidate issued tokens and every server instance
+ * would publish a different key.
  */
 
 export const BUSINESS_TOKEN_AUDIENCE = "gcr-api-clean";
@@ -60,10 +61,20 @@ function keyFromPrivate(privateKey: KeyObject, generated: boolean): SigningKey {
   return { privateKey, publicJwk: { ...jwk, kid, alg, use: "sig" }, alg, kid, generated };
 }
 
-/** PEM from env; literal "\n" sequences are accepted for single-line env files. */
+/**
+ * PEM from env; literal "\n" sequences are accepted for single-line env files.
+ * A temporary key is generated only outside production: with NODE_ENV=production
+ * a missing key is a configuration error, never a throwaway key.
+ */
 export function loadSigningKey(env: Record<string, string | undefined> = process.env): SigningKey {
   const pem = env.NEXTGENT_JWT_PRIVATE_KEY?.trim();
   if (pem) return keyFromPrivate(createPrivateKey(pem.replace(/\\n/g, "\n")), false);
+  if (env.NODE_ENV === "production") {
+    throw new Error(
+      "NEXTGENT_JWT_PRIVATE_KEY is not set. In production the business-token signing key must be configured " +
+        "(a generated key would change on every restart and differ per instance). Generate one with: openssl genpkey -algorithm ed25519",
+    );
+  }
   const { privateKey } = generateKeyPairSync("ed25519");
   return keyFromPrivate(privateKey, true);
 }
@@ -86,6 +97,15 @@ function currentKey(): SigningKey {
 /** Test hook: forget the loaded key so the next call re-reads the environment. */
 export function resetBusinessTokenKeyForTests() {
   cached = null;
+}
+
+/**
+ * Startup check: load the key now so a production server without
+ * NEXTGENT_JWT_PRIVATE_KEY fails at start with the error above, instead of at
+ * the first token mint.
+ */
+export function assertBusinessTokenKeyLoadable(): void {
+  currentKey();
 }
 
 export function businessTokenJwks(): { keys: Record<string, unknown>[] } {

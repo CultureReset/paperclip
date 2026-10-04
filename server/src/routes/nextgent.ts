@@ -8,9 +8,9 @@ import { conflict, forbidden, HttpError, notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { accessService } from "../services/access.js";
 import { normalizeHumanRole } from "../services/company-member-roles.js";
-import { businessTokenJwks, signBusinessToken, type BusinessTokenRole } from "../services/nextgent-business-jwt.js";
+import { assertBusinessTokenKeyLoadable, businessTokenJwks, signBusinessToken, type BusinessTokenRole } from "../services/nextgent-business-jwt.js";
 import { nextgentBusinessLinkService } from "../services/nextgent-business-link.js";
-import { readNextgentConfig, type NextgentConfig } from "../services/nextgent-config.js";
+import { gcrConfigured, readNextgentConfig, type NextgentConfig } from "../services/nextgent-config.js";
 import { gcrClient, upstreamDetails, type FetchLike } from "../services/nextgent-gcr-client.js";
 import {
   nextgentConversationSchema,
@@ -275,6 +275,10 @@ export function requireNextgentSignature(config: NextgentConfig): RequestHandler
 export function nextgentPublicRoutes(db: Db, options: NextgentRouteOptions = {}) {
   const router = Router();
   const config = options.config ?? readNextgentConfig();
+  // A NEXT GENT deployment (gcr-api-clean wired) must hold its signing key
+  // from the start: in production a missing NEXTGENT_JWT_PRIVATE_KEY stops
+  // the server here with a clear error rather than at the first token mint.
+  if (gcrConfigured(config)) assertBusinessTokenKeyLoadable();
   const inbound = nextgentInboundService(db, { config });
   const signed = requireNextgentSignature(config);
 

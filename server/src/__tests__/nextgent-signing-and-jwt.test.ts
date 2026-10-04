@@ -191,5 +191,24 @@ describe("business token (contract §1)", () => {
     const key = loadSigningKey({});
     expect(key.generated).toBe(true);
     expect(key.alg).toBe("EdDSA");
+    expect(loadSigningKey({ NODE_ENV: "test" }).generated).toBe(true);
+  });
+
+  it("refuses to generate a key in production: NEXTGENT_JWT_PRIVATE_KEY must be set", () => {
+    expect(() => loadSigningKey({ NODE_ENV: "production" })).toThrow(/NEXTGENT_JWT_PRIVATE_KEY/);
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const pem = privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+    expect(loadSigningKey({ NODE_ENV: "production", NEXTGENT_JWT_PRIVATE_KEY: pem }).generated).toBe(false);
+    // The same check guards the JWKS and every token mint at runtime.
+    const savedNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    delete process.env.NEXTGENT_JWT_PRIVATE_KEY;
+    resetBusinessTokenKeyForTests();
+    try {
+      expect(() => businessTokenJwks()).toThrow(/NEXTGENT_JWT_PRIVATE_KEY/);
+      expect(() => signBusinessToken({ issuer: "i", userId: "u", companyId: "c", role: "member", ttlSeconds: 60 })).toThrow(/NEXTGENT_JWT_PRIVATE_KEY/);
+    } finally {
+      process.env.NODE_ENV = savedNodeEnv;
+    }
   });
 });
