@@ -60,13 +60,21 @@ export function nextgentCompanySetup(db: Db, options: { config?: NextgentConfig;
     return "created";
   }
 
-  async function findAssistant(companyId: string): Promise<string | null> {
+  /**
+   * The company's assistant: the agent this setup marked, or failing that an
+   * agent already carrying the configured name (the onboarding wizard creates
+   * one by name), so the company never ends up with two.
+   */
+  async function findAssistant(companyId: string, name: string | null): Promise<string | null> {
     const rows = await db
-      .select({ id: agents.id, metadata: agents.metadata })
+      .select({ id: agents.id, name: agents.name, metadata: agents.metadata })
       .from(agents)
       .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated")));
-    const found = rows.find((row) => (row.metadata as Record<string, unknown> | null)?.[ASSISTANT_METADATA_KEY] === true);
-    return found?.id ?? null;
+    const marked = rows.find((row) => (row.metadata as Record<string, unknown> | null)?.[ASSISTANT_METADATA_KEY] === true);
+    if (marked) return marked.id;
+    const wanted = name?.trim().toLowerCase();
+    const named = wanted ? rows.find((row) => row.name.trim().toLowerCase() === wanted) : undefined;
+    return named?.id ?? null;
   }
 
   async function ensureAssistant(companyId: string): Promise<SetupStepResult> {
@@ -79,7 +87,7 @@ export function nextgentCompanySetup(db: Db, options: { config?: NextgentConfig;
       );
       return "skipped";
     }
-    if (await findAssistant(companyId)) return "exists";
+    if (await findAssistant(companyId, name)) return "exists";
     const created = (await agentSvc.create(companyId, {
       name,
       role: "ceo",

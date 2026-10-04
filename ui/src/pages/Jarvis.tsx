@@ -45,7 +45,8 @@ export function Jarvis() {
   }
 
   const activeAgents = (agents.data ?? []).filter((agent) => agent.status !== "terminated");
-  const jarvis = activeAgents.find((agent) => agent.name.trim().toLowerCase() === ASSISTANT_NAME.toLowerCase())
+  const jarvis = activeAgents.find((agent) => agent.metadata?.nextgentAssistant === true)
+    ?? activeAgents.find((agent) => agent.name.trim().toLowerCase() === ASSISTANT_NAME.toLowerCase())
     ?? activeAgents[0];
 
   if (jarvis) {

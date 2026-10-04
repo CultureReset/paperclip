@@ -26,6 +26,7 @@ import { NEXTGENT_SECRET_NAMES } from "../services/nextgent-config.js";
 import { nextgentBusinessLinkService } from "../services/nextgent-business-link.js";
 import { BUSINESS_PLUGIN_KEY, nextgentBusinessPlugin } from "../services/nextgent-business-plugin.js";
 import { nextgentCompanySetup } from "../services/nextgent-company-setup.js";
+import { agentService } from "../services/agents.js";
 import { companyModelGatewayEnv } from "../services/nextgent-model-gateway.js";
 import { nextgentInboundService } from "../services/nextgent-inbound.js";
 import { nextgentStoreBridge } from "../services/nextgent-store.js";
@@ -221,6 +222,32 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
     expect(await companyModelGatewayEnv(db, companyId, configWith())).toMatchObject({ ANTHROPIC_BASE_URL: LLM, ANTHROPIC_API_KEY: "sk-company-key" });
     // Without LiteLLM settings the server-wide key stays in charge.
     expect(await companyModelGatewayEnv(db, companyId, configWith({ litellm: { url: null, masterKey: null, companyBudget: null, budgetDuration: null } }))).toBeNull();
+  });
+
+  it("adopts an assistant the owner already created under the configured name instead of making a second one", async () => {
+    const companyId = await seedCompany("DUP");
+    // The onboarding wizard creates the assistant by name, without the server's marker.
+    await agentService(db).create(companyId, {
+      name: "assistant",
+      role: "ceo",
+      title: null,
+      capabilities: null,
+      adapterType: "process",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+      budgetMonthlyCents: 0,
+      status: "idle",
+      metadata: {},
+      spentMonthlyCents: 0,
+      lastHeartbeatAt: null,
+    });
+    const setup = nextgentCompanySetup(db, {
+      config: configWith({ litellm: { url: null, masterKey: null, companyBudget: null, budgetDuration: null } }),
+    });
+    expect((await setup.runAccountSetup(companyId, "owner-DUP")).assistant).toBe("exists");
+    const all = await db.select().from(agents).where(eq(agents.companyId, companyId));
+    expect(all).toHaveLength(1);
   });
 
   it("skips setup steps whose settings are missing", async () => {
