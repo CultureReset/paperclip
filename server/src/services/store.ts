@@ -6,6 +6,17 @@ import { pluginRegistryService } from "./plugin-registry.js";
 
 export const STORE_ITEM_KINDS = ["plugin", "pack", "skill", "automation", "connector"] as const;
 export type StoreItemKind = (typeof STORE_ITEM_KINDS)[number];
+export const STORE_CHANNELS = ["stable", "fast"] as const;
+export type StoreChannel = (typeof STORE_CHANNELS)[number];
+export const STORE_ADVISORY_TYPES = ["security", "bugfix", "enhancement"] as const;
+export type StoreAdvisoryType = (typeof STORE_ADVISORY_TYPES)[number];
+export const STORE_APPROVAL_MODES = ["automatic", "manual"] as const;
+export type StoreApprovalMode = (typeof STORE_APPROVAL_MODES)[number];
+
+/** A "fast" subscription also receives everything released to "stable". */
+function channelsFor(channel: string): StoreChannel[] {
+  return channel === "fast" ? ["stable", "fast"] : ["stable"];
+}
 
 type StoreItemRow = typeof storeItems.$inferSelect;
 type StoreVersionRow = typeof storeItemVersions.$inferSelect;
@@ -23,8 +34,16 @@ export interface StoreItemInput {
 
 export interface StoreVersionInput {
   version: string;
+  channel?: StoreChannel;
+  advisoryType?: StoreAdvisoryType;
+  required?: boolean;
   changelog?: string | null;
   payload?: Record<string, unknown>;
+}
+
+export interface StoreSubscriptionInput {
+  channel?: StoreChannel;
+  approvalMode?: StoreApprovalMode;
 }
 
 /**
@@ -38,6 +57,17 @@ export function storeService(db: Db) {
     const item = await db.select().from(storeItems).where(eq(storeItems.id, itemId)).then((rows) => rows[0]);
     if (!item) throw notFound("Store item not found");
     return item;
+  }
+
+  /** Newest version an install on `channel` may receive. */
+  async function newestFor(itemId: string, channel: string): Promise<StoreVersionRow | null> {
+    return db
+      .select()
+      .from(storeItemVersions)
+      .where(and(eq(storeItemVersions.itemId, itemId), inArray(storeItemVersions.channel, channelsFor(channel))))
+      .orderBy(desc(storeItemVersions.createdAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
   }
 
   async function getInstall(companyId: string, itemId: string): Promise<StoreInstallRow | null> {
@@ -104,11 +134,16 @@ export function storeService(db: Db) {
     },
 
     /**
-     * Add a version. It becomes the item's latest version; with `push`, every
-     * company that installed the item is moved to it.
+     * Release a version to a channel. Installs on that channel with automatic
+     * approval move to it at once; manual installs see it as an available
+     * update. A required security advisory moves every install on the channel.
      */
-    async addVersion(itemId: string, input: StoreVersionInput, userId: string | null, options: { push: boolean }) {
+    async addVersion(itemId: string, input: StoreVersionInput, userId: string | null) {
       const item = await getItem(itemId);
+      const channel = input.channel ?? "stable";
+      const advisoryType = input.advisoryType ?? "enhancement";
+      const required = input.required ?? false;
+      if (required && advisoryType !== "security") throw badRequest("Only security advisories can be required");
       return db.transaction(async (tx) => {
         const existing = await tx
           .select({ id: storeItemVersions.id })
@@ -120,25 +155,38 @@ export function storeService(db: Db) {
           .values({
             itemId,
             version: input.version,
+            channel,
+            advisoryType,
+            required,
             changelog: input.changelog ?? null,
             payload: input.payload ?? {},
             createdByUserId: userId,
           })
           .returning();
-        await tx
-          .update(storeItems)
-          .set({ latestVersionId: version.id, updatedAt: new Date() })
-          .where(eq(storeItems.id, itemId));
-        let pushedTo = 0;
-        if (options.push) {
-          const updated = await tx
+        // The item's headline version is its newest stable release.
+        if (channel === "stable" || !item.latestVersionId) {
+          await tx
+            .update(storeItems)
+            .set({ latestVersionId: version.id, updatedAt: new Date() })
+            .where(eq(storeItems.id, itemId));
+        }
+        const reached = await tx
+          .select()
+          .from(storeInstalls)
+          .where(
+            and(
+              eq(storeInstalls.itemId, itemId),
+              channel === "stable" ? undefined : eq(storeInstalls.channel, "fast"),
+            ),
+          );
+        const applyTo = reached.filter((install) => required || install.approvalMode === "automatic");
+        if (applyTo.length > 0) {
+          await tx
             .update(storeInstalls)
             .set({ versionId: version.id, updatedAt: new Date() })
-            .where(eq(storeInstalls.itemId, itemId))
-            .returning({ id: storeInstalls.id });
-          pushedTo = updated.length;
+            .where(inArray(storeInstalls.id, applyTo.map((install) => install.id)));
         }
-        return { version, pushedTo };
+        return { version, appliedTo: applyTo.length, pendingFor: reached.length - applyTo.length };
       });
     },
 
@@ -174,43 +222,75 @@ export function storeService(db: Db) {
       const installs = await db.select().from(storeInstalls).where(eq(storeInstalls.companyId, companyId));
       const installByItem = new Map(installs.map((install) => [install.itemId, install]));
       const items = await db.select().from(storeItems).orderBy(asc(storeItems.name));
-      const versionIds = items.map((item) => item.latestVersionId).filter((id): id is string => Boolean(id));
-      const versions: StoreVersionRow[] = versionIds.length
-        ? await db.select().from(storeItemVersions).where(inArray(storeItemVersions.id, versionIds))
+      const visible = items.filter((item) => item.status === "published" || installByItem.has(item.id));
+      const versions: StoreVersionRow[] = visible.length
+        ? await db
+            .select()
+            .from(storeItemVersions)
+            .where(inArray(storeItemVersions.itemId, visible.map((item) => item.id)))
+            .orderBy(desc(storeItemVersions.createdAt))
         : [];
-      const versionById = new Map(versions.map((version) => [version.id, version]));
-      return items
-        .filter((item) => item.status === "published" || installByItem.has(item.id))
-        .map((item) => {
-          const install = installByItem.get(item.id) ?? null;
-          const latest = item.latestVersionId ? versionById.get(item.latestVersionId) ?? null : null;
-          return {
-            id: item.id,
-            key: item.key,
-            kind: item.kind,
-            name: item.name,
-            summary: item.summary,
-            description: item.description,
-            iconUrl: item.iconUrl,
-            status: item.status,
-            latestVersion: latest?.version ?? null,
-            installed: install !== null,
-            installedVersionId: install?.versionId ?? null,
-            updateAvailable: install !== null && install.versionId !== item.latestVersionId,
-          };
-        });
+      return visible.map((item) => {
+        const install = installByItem.get(item.id) ?? null;
+        const channel = install?.channel ?? "stable";
+        const itemVersions = versions.filter((version) => version.itemId === item.id);
+        const latest = itemVersions.find((version) => channelsFor(channel).includes(version.channel as StoreChannel)) ?? null;
+        const current = install ? itemVersions.find((version) => version.id === install.versionId) ?? null : null;
+        const updateAvailable = install !== null && latest !== null && install.versionId !== latest.id;
+        return {
+          id: item.id,
+          key: item.key,
+          kind: item.kind,
+          name: item.name,
+          summary: item.summary,
+          description: item.description,
+          iconUrl: item.iconUrl,
+          status: item.status,
+          latestVersion: latest?.version ?? null,
+          installed: install !== null,
+          installedVersion: current?.version ?? null,
+          channel: install?.channel ?? null,
+          approvalMode: install?.approvalMode ?? null,
+          updateAvailable,
+          updateAdvisory: updateAvailable ? latest?.advisoryType ?? null : null,
+          updateChangelog: updateAvailable ? latest?.changelog ?? null : null,
+        };
+      });
     },
 
-    async install(companyId: string, itemId: string, userId: string | null) {
+    async install(companyId: string, itemId: string, userId: string | null, subscription: StoreSubscriptionInput = {}) {
       const item = await getItem(itemId);
       if (item.status !== "published") throw conflict("This item is not available in the store");
       if (await getInstall(companyId, itemId)) throw conflict(`${item.name} is already installed`);
+      const channel = subscription.channel ?? "stable";
+      const version = await newestFor(itemId, channel);
+      if (!version) throw conflict(`${item.name} has no release on the ${channel} channel`);
       await applyToCompany(item, companyId, true);
       const [install] = await db
         .insert(storeInstalls)
-        .values({ companyId, itemId, versionId: item.latestVersionId, installedByUserId: userId })
+        .values({
+          companyId,
+          itemId,
+          versionId: version.id,
+          channel,
+          approvalMode: subscription.approvalMode ?? "automatic",
+          installedByUserId: userId,
+        })
         .returning();
       return install;
+    },
+
+    /** Change a company's channel or approval mode for an installed item. */
+    async updateSubscription(companyId: string, itemId: string, subscription: StoreSubscriptionInput) {
+      const item = await getItem(itemId);
+      const install = await getInstall(companyId, itemId);
+      if (!install) throw notFound(`${item.name} is not installed`);
+      const [updated] = await db
+        .update(storeInstalls)
+        .set({ ...subscription, updatedAt: new Date() })
+        .where(eq(storeInstalls.id, install.id))
+        .returning();
+      return updated;
     },
 
     async uninstall(companyId: string, itemId: string) {
@@ -225,9 +305,11 @@ export function storeService(db: Db) {
       const item = await getItem(itemId);
       const install = await getInstall(companyId, itemId);
       if (!install) throw notFound(`${item.name} is not installed`);
+      const latest = await newestFor(itemId, install.channel);
+      if (!latest) throw conflict(`${item.name} has no release on the ${install.channel} channel`);
       const [updated] = await db
         .update(storeInstalls)
-        .set({ versionId: item.latestVersionId, updatedAt: new Date() })
+        .set({ versionId: latest.id, updatedAt: new Date() })
         .where(eq(storeInstalls.id, install.id))
         .returning();
       return updated;

@@ -2,11 +2,17 @@ import { api } from "./client";
 
 export type StoreItemKind = "plugin" | "pack" | "skill" | "automation" | "connector";
 export type StoreItemStatus = "draft" | "published" | "retired";
+export type StoreChannel = "stable" | "fast";
+export type StoreAdvisoryType = "security" | "bugfix" | "enhancement";
+export type StoreApprovalMode = "automatic" | "manual";
 
 export interface StoreItemVersion {
   id: string;
   itemId: string;
   version: string;
+  channel: StoreChannel;
+  advisoryType: StoreAdvisoryType;
+  required: boolean;
   changelog: string | null;
   createdAt: string;
 }
@@ -39,7 +45,25 @@ export interface StoreListing {
   status: StoreItemStatus;
   latestVersion: string | null;
   installed: boolean;
+  installedVersion: string | null;
+  channel: StoreChannel | null;
+  approvalMode: StoreApprovalMode | null;
   updateAvailable: boolean;
+  updateAdvisory: StoreAdvisoryType | null;
+  updateChangelog: string | null;
+}
+
+export interface StoreRelease {
+  version: string;
+  channel: StoreChannel;
+  advisoryType: StoreAdvisoryType;
+  required: boolean;
+  changelog?: string | null;
+}
+
+export interface StoreSubscription {
+  channel?: StoreChannel;
+  approvalMode?: StoreApprovalMode;
 }
 
 export interface StoreItemCreate {
@@ -55,14 +79,17 @@ export const storeApi = {
   // Platform admin
   listAll: () => api.get<StoreAdminItem[]>("/store/admin/items"),
   create: (input: StoreItemCreate) => api.post<StoreAdminItem>("/store/admin/items", input),
-  addVersion: (itemId: string, input: { version: string; changelog?: string | null; push: boolean }) =>
-    api.post<{ pushedTo: number }>(`/store/admin/items/${itemId}/versions`, input),
+  addVersion: (itemId: string, input: StoreRelease) =>
+    api.post<{ appliedTo: number; pendingFor: number }>(`/store/admin/items/${itemId}/versions`, input),
   publish: (itemId: string) => api.post<StoreAdminItem>(`/store/admin/items/${itemId}/publish`, {}),
   retire: (itemId: string) => api.post<StoreAdminItem>(`/store/admin/items/${itemId}/retire`, {}),
 
   // Company
   list: (companyId: string) => api.get<StoreListing[]>(`/companies/${companyId}/store`),
-  install: (companyId: string, itemId: string) => api.post<unknown>(`/companies/${companyId}/store/${itemId}/install`, {}),
+  install: (companyId: string, itemId: string, subscription: StoreSubscription = {}) =>
+    api.post<unknown>(`/companies/${companyId}/store/${itemId}/install`, subscription),
+  setSubscription: (companyId: string, itemId: string, subscription: StoreSubscription) =>
+    api.patch<unknown>(`/companies/${companyId}/store/${itemId}`, subscription),
   update: (companyId: string, itemId: string) => api.post<unknown>(`/companies/${companyId}/store/${itemId}/update`, {}),
   uninstall: (companyId: string, itemId: string) => api.delete<void>(`/companies/${companyId}/store/${itemId}`),
 };

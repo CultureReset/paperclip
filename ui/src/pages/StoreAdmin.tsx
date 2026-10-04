@@ -4,7 +4,7 @@ import { Plus, Store as StoreIcon } from "lucide-react";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useToastActions } from "@/context/ToastContext";
-import { storeApi, type StoreAdminItem, type StoreItemKind } from "@/api/store";
+import { storeApi, type StoreAdminItem, type StoreAdvisoryType, type StoreChannel, type StoreItemKind } from "@/api/store";
 import { queryKeys } from "@/lib/queryKeys";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,7 +32,7 @@ const STATUS_LABELS: Record<StoreAdminItem["status"], string> = {
   retired: "Unpublished",
 };
 
-/** Platform admin: create store items, add versions, publish and push updates. */
+/** Platform admin: create store items, publish them and release updates. */
 export function StoreAdmin() {
   const { selectedCompany } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -101,14 +101,14 @@ export function StoreAdmin() {
                       <Badge variant={item.status === "published" ? "default" : "secondary"}>{STATUS_LABELS[item.status]}</Badge>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {item.versions[0] ? `Latest v${item.versions[0].version}` : "No versions yet"} ·{" "}
+                      {item.versions[0] ? `Latest v${item.versions[0].version} (${item.versions[0].channel})` : "No versions yet"} ·{" "}
                       {item.installCount} {item.installCount === 1 ? "company" : "companies"} installed
                       {item.pluginKey ? ` · ${item.pluginKey}` : ""}
                     </p>
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
                     <Button size="sm" variant="outline" onClick={() => setVersionFor(item)}>
-                      New version
+                      New release
                     </Button>
                     <Button
                       size="sm"
@@ -256,51 +256,92 @@ function NewVersionDialog({
   const { pushToast } = useToastActions();
   const [version, setVersion] = useState("");
   const [changelog, setChangelog] = useState("");
-  const [push, setPush] = useState(true);
+  const [channel, setChannel] = useState<StoreChannel>("stable");
+  const [advisoryType, setAdvisoryType] = useState<StoreAdvisoryType>("enhancement");
+  const [required, setRequired] = useState(false);
 
   const save = useMutation({
-    mutationFn: () => storeApi.addVersion(item!.id, { version, changelog: changelog || null, push }),
+    mutationFn: () =>
+      storeApi.addVersion(item!.id, {
+        version,
+        channel,
+        advisoryType,
+        required: advisoryType === "security" && required,
+        changelog: changelog || null,
+      }),
     onSuccess: (result) => {
       onSaved();
+      const companies = (n: number) => `${n} ${n === 1 ? "company" : "companies"}`;
       pushToast({
-        title: `Saved v${version}`,
-        body: push ? `Pushed to ${result.pushedTo} ${result.pushedTo === 1 ? "company" : "companies"}.` : undefined,
+        title: `Released v${version}`,
+        body: `Updated ${companies(result.appliedTo)}. Waiting on ${companies(result.pendingFor)} that update manually.`,
         tone: "success",
       });
       setVersion("");
       setChangelog("");
+      setChannel("stable");
+      setAdvisoryType("enhancement");
+      setRequired(false);
       onClose();
     },
     onError,
   });
 
+  const selectClass = "h-9 rounded-md border bg-background px-3 text-sm";
+
   return (
     <Dialog open={item !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New version of {item?.name}</DialogTitle>
-          <DialogDescription>The newest version is what new installs get.</DialogDescription>
+          <DialogTitle>New release of {item?.name}</DialogTitle>
+          <DialogDescription>
+            Companies on automatic updates get it right away. Companies on manual updates see an Update button.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid gap-2">
             <Label htmlFor="store-version">Version</Label>
             <Input id="store-version" value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.0.0" />
           </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor="store-channel">Channel</Label>
+              <select id="store-channel" className={selectClass} value={channel} onChange={(e) => setChannel(e.target.value as StoreChannel)}>
+                <option value="stable">Stable (everyone)</option>
+                <option value="fast">Fast (early access only)</option>
+              </select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="store-advisory">Type</Label>
+              <select
+                id="store-advisory"
+                className={selectClass}
+                value={advisoryType}
+                onChange={(e) => setAdvisoryType(e.target.value as StoreAdvisoryType)}
+              >
+                <option value="enhancement">New feature</option>
+                <option value="bugfix">Bug fix</option>
+                <option value="security">Security fix</option>
+              </select>
+            </div>
+          </div>
           <div className="grid gap-2">
             <Label htmlFor="store-changelog">What changed</Label>
             <Textarea id="store-changelog" value={changelog} onChange={(e) => setChangelog(e.target.value)} rows={3} />
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={push} onCheckedChange={(value) => setPush(value === true)} />
-            Push this version to every company that installed it
-          </label>
+          {advisoryType === "security" && (
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox checked={required} onCheckedChange={(value) => setRequired(value === true)} />
+              Required: install it for every company, even manual ones
+            </label>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
           <Button disabled={!version || save.isPending} onClick={() => save.mutate()}>
-            {save.isPending ? "Saving..." : "Save version"}
+            {save.isPending ? "Releasing..." : "Release"}
           </Button>
         </DialogFooter>
       </DialogContent>

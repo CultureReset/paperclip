@@ -5,7 +5,13 @@ import { validate } from "../middleware/validate.js";
 import { forbidden } from "../errors.js";
 import { accessService } from "../services/access.js";
 import { normalizeHumanRole } from "../services/company-member-roles.js";
-import { STORE_ITEM_KINDS, storeService } from "../services/store.js";
+import {
+  STORE_ADVISORY_TYPES,
+  STORE_APPROVAL_MODES,
+  STORE_CHANNELS,
+  STORE_ITEM_KINDS,
+  storeService,
+} from "../services/store.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin } from "./authz.js";
 
 const itemKeySchema = z.string().trim().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/, "Use lowercase letters, numbers and dashes");
@@ -29,10 +35,20 @@ const updateItemSchema = z.object({
 
 const addVersionSchema = z.object({
   version: z.string().trim().min(1).max(40),
+  channel: z.enum(STORE_CHANNELS).default("stable"),
+  advisoryType: z.enum(STORE_ADVISORY_TYPES).default("enhancement"),
+  required: z.boolean().default(false),
   changelog: z.string().trim().max(10_000).nullish(),
   payload: z.record(z.string(), z.unknown()).optional(),
-  push: z.boolean().default(false),
 });
+
+const subscriptionSchema = z
+  .object({
+    channel: z.enum(STORE_CHANNELS).optional(),
+    approvalMode: z.enum(STORE_APPROVAL_MODES).optional(),
+  })
+  .optional()
+  .transform((value) => value ?? {});
 
 /** Store installs change what a whole company sees, so only its owners and admins may do them. */
 async function assertCanManageInstalls(req: Request, access: ReturnType<typeof accessService>, companyId: string) {
@@ -70,8 +86,7 @@ export function storeRoutes(db: Db) {
 
   router.post("/store/admin/items/:itemId/versions", validate(addVersionSchema), async (req, res) => {
     assertInstanceAdmin(req);
-    const { push, ...version } = req.body;
-    res.status(201).json(await store.addVersion(req.params.itemId as string, version, req.actor.userId ?? null, { push }));
+    res.status(201).json(await store.addVersion(req.params.itemId as string, req.body, req.actor.userId ?? null));
   });
 
   router.post("/store/admin/items/:itemId/publish", async (req, res) => {
@@ -92,10 +107,16 @@ export function storeRoutes(db: Db) {
     res.json(await store.listForCompany(companyId));
   });
 
-  router.post("/companies/:companyId/store/:itemId/install", async (req, res) => {
+  router.post("/companies/:companyId/store/:itemId/install", validate(subscriptionSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertCanManageInstalls(req, access, companyId);
-    res.status(201).json(await store.install(companyId, req.params.itemId as string, req.actor.userId ?? null));
+    res.status(201).json(await store.install(companyId, req.params.itemId as string, req.actor.userId ?? null, req.body));
+  });
+
+  router.patch("/companies/:companyId/store/:itemId", validate(subscriptionSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    await assertCanManageInstalls(req, access, companyId);
+    res.json(await store.updateSubscription(companyId, req.params.itemId as string, req.body));
   });
 
   router.post("/companies/:companyId/store/:itemId/update", async (req, res) => {

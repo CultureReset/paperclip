@@ -147,24 +147,47 @@ describeEmbeddedPostgres("store", () => {
     expect(bView.body[0].installed).toBe(false);
   });
 
-  it("pushes a new version to every company that installed it", async () => {
-    const companyA = await seedCompany("PSA", [{ userId: "alice", role: "owner" }]);
-    const companyB = await seedCompany("PSB", [{ userId: "bob", role: "owner" }]);
+  it("releases updates Red Hat style: channels, automatic or manual approval, required security fixes", async () => {
+    const auto = await seedCompany("AUT", [{ userId: "alice", role: "owner" }]);
+    const manual = await seedCompany("MAN", [{ userId: "bob", role: "owner" }]);
+    const fast = await seedCompany("FST", [{ userId: "carol", role: "owner" }]);
+    const outsider = await seedCompany("OUT", [{ userId: "dave", role: "owner" }]);
     const itemId = await publishedPack();
-    await request(appAs(member("alice", companyA))).post(`/api/companies/${companyA}/store/${itemId}/install`).expect(201);
+    const release = (body: Record<string, unknown>) =>
+      request(appAs(admin)).post(`/api/store/admin/items/${itemId}/versions`).send(body).expect(201);
+    const view = async (userId: string, companyId: string) =>
+      (await request(appAs(member(userId, companyId))).get(`/api/companies/${companyId}/store`).expect(200)).body[0];
 
-    const quiet = await request(appAs(admin)).post(`/api/store/admin/items/${itemId}/versions`).send({ version: "1.1.0" }).expect(201);
-    expect(quiet.body.pushedTo).toBe(0);
-    const stale = await request(appAs(member("alice", companyA))).get(`/api/companies/${companyA}/store`).expect(200);
-    expect(stale.body[0]).toMatchObject({ latestVersion: "1.1.0", updateAvailable: true });
+    await request(appAs(member("alice", auto))).post(`/api/companies/${auto}/store/${itemId}/install`).send({}).expect(201);
+    await request(appAs(member("bob", manual))).post(`/api/companies/${manual}/store/${itemId}/install`).send({ approvalMode: "manual" }).expect(201);
+    await request(appAs(member("carol", fast))).post(`/api/companies/${fast}/store/${itemId}/install`).send({ channel: "fast" }).expect(201);
 
-    const pushed = await request(appAs(admin)).post(`/api/store/admin/items/${itemId}/versions`).send({ version: "1.2.0", push: true }).expect(201);
-    expect(pushed.body.pushedTo).toBe(1);
-    const current = await request(appAs(member("alice", companyA))).get(`/api/companies/${companyA}/store`).expect(200);
-    expect(current.body[0]).toMatchObject({ latestVersion: "1.2.0", updateAvailable: false });
+    // A stable enhancement: automatic installs take it, manual ones are offered it.
+    expect((await release({ version: "1.1.0" })).body).toMatchObject({ appliedTo: 2, pendingFor: 1 });
+    expect(await view("alice", auto)).toMatchObject({ installedVersion: "1.1.0", updateAvailable: false });
+    expect(await view("bob", manual)).toMatchObject({ installedVersion: "1.0.0", updateAvailable: true, updateAdvisory: "enhancement" });
+    expect(await view("carol", fast)).toMatchObject({ installedVersion: "1.1.0" });
 
-    const untouched = await request(appAs(member("bob", companyB))).get(`/api/companies/${companyB}/store`).expect(200);
-    expect(untouched.body[0].installed).toBe(false);
+    // A fast release reaches only fast subscribers.
+    expect((await release({ version: "1.2.0-beta", channel: "fast" })).body).toMatchObject({ appliedTo: 1, pendingFor: 0 });
+    expect(await view("alice", auto)).toMatchObject({ installedVersion: "1.1.0", latestVersion: "1.1.0" });
+    expect(await view("carol", fast)).toMatchObject({ installedVersion: "1.2.0-beta" });
+
+    // Only security advisories can be required, and a required one reaches manual installs too.
+    await request(appAs(admin)).post(`/api/store/admin/items/${itemId}/versions`).send({ version: "x", required: true }).expect(400);
+    expect((await release({ version: "1.1.1", advisoryType: "security", required: true })).body).toMatchObject({ appliedTo: 3, pendingFor: 0 });
+    expect(await view("bob", manual)).toMatchObject({ installedVersion: "1.1.1", updateAvailable: false });
+
+    // A manual company updates when it chooses; switching to automatic is its own call.
+    await release({ version: "1.3.0", advisoryType: "bugfix" });
+    expect(await view("bob", manual)).toMatchObject({ updateAvailable: true, updateAdvisory: "bugfix" });
+    await request(appAs(member("bob", manual))).post(`/api/companies/${manual}/store/${itemId}/update`).expect(200);
+    expect(await view("bob", manual)).toMatchObject({ installedVersion: "1.3.0", updateAvailable: false });
+    await request(appAs(member("bob", manual))).patch(`/api/companies/${manual}/store/${itemId}`).send({ approvalMode: "automatic" }).expect(200);
+    expect(await view("bob", manual)).toMatchObject({ approvalMode: "automatic" });
+
+    // A company that never installed it is untouched.
+    expect(await view("dave", outsider)).toMatchObject({ installed: false });
   });
 
   it("shows a store plugin only inside companies that installed it", async () => {

@@ -4,7 +4,7 @@ import { Store as StoreIcon } from "lucide-react";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useToastActions } from "@/context/ToastContext";
-import { storeApi, type StoreItemKind, type StoreListing } from "@/api/store";
+import { storeApi, type StoreAdvisoryType, type StoreItemKind, type StoreListing, type StoreSubscription } from "@/api/store";
 import { queryKeys } from "@/lib/queryKeys";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,12 @@ export const STORE_KIND_LABELS: Record<StoreItemKind, string> = {
   skill: "Skill",
   automation: "Automation",
   connector: "Connector",
+};
+
+const ADVISORY_LABELS: Record<StoreAdvisoryType, string> = {
+  security: "Security fix",
+  bugfix: "Bug fix",
+  enhancement: "New feature",
 };
 
 /**
@@ -46,7 +52,7 @@ export function Store() {
   };
 
   const action = useMutation({
-    mutationFn: async ({ kind, item }: { kind: "install" | "update" | "uninstall"; item: StoreListing }) => {
+    mutationFn: async ({ kind, item }: { kind: StoreActionKind; item: StoreListing }) => {
       if (!selectedCompanyId) return;
       if (kind === "install") await storeApi.install(selectedCompanyId, item.id);
       if (kind === "update") await storeApi.update(selectedCompanyId, item.id);
@@ -58,6 +64,13 @@ export function Store() {
       pushToast({ title: `${verb} ${item.name}`, tone: "success" });
     },
     onError: (err: Error) => pushToast({ title: "Store action failed", body: err.message, tone: "error" }),
+  });
+
+  const subscription = useMutation({
+    mutationFn: ({ item, change }: { item: StoreListing; change: StoreSubscription }) =>
+      storeApi.setSubscription(selectedCompanyId!, item.id, change),
+    onSuccess: refresh,
+    onError: (err: Error) => pushToast({ title: "Could not change update settings", body: err.message, tone: "error" }),
   });
 
   const listings = listingsQuery.data ?? [];
@@ -80,10 +93,22 @@ export function Store() {
       ) : (
         <>
           {installed.length > 0 && (
-            <StoreSection title="Installed" items={installed} busy={action.isPending} onAction={(kind, item) => action.mutate({ kind, item })} />
+            <StoreSection
+              title="Installed"
+              items={installed}
+              busy={action.isPending || subscription.isPending}
+              onAction={(kind, item) => action.mutate({ kind, item })}
+              onSubscription={(item, change) => subscription.mutate({ item, change })}
+            />
           )}
           {available.length > 0 && (
-            <StoreSection title="Available" items={available} busy={action.isPending} onAction={(kind, item) => action.mutate({ kind, item })} />
+            <StoreSection
+              title="Available"
+              items={available}
+              busy={action.isPending}
+              onAction={(kind, item) => action.mutate({ kind, item })}
+              onSubscription={() => {}}
+            />
           )}
         </>
       )}
@@ -91,16 +116,20 @@ export function Store() {
   );
 }
 
+type StoreActionKind = "install" | "update" | "uninstall";
+
 function StoreSection({
   title,
   items,
   busy,
   onAction,
+  onSubscription,
 }: {
   title: string;
   items: StoreListing[];
   busy: boolean;
-  onAction: (kind: "install" | "update" | "uninstall", item: StoreListing) => void;
+  onAction: (kind: StoreActionKind, item: StoreListing) => void;
+  onSubscription: (item: StoreListing, change: StoreSubscription) => void;
 }) {
   return (
     <section className="space-y-3">
@@ -121,12 +150,49 @@ function StoreSection({
                   <p className="truncate font-medium">{item.name}</p>
                   <div className="mt-1 flex flex-wrap gap-1.5">
                     <Badge variant="outline">{STORE_KIND_LABELS[item.kind]}</Badge>
-                    {item.latestVersion && <Badge variant="secondary">v{item.latestVersion}</Badge>}
-                    {item.updateAvailable && <Badge>Update available</Badge>}
+                    {(item.installedVersion ?? item.latestVersion) && (
+                      <Badge variant="secondary">v{item.installedVersion ?? item.latestVersion}</Badge>
+                    )}
+                    {item.updateAvailable && (
+                      <Badge variant={item.updateAdvisory === "security" ? "destructive" : "default"}>
+                        {item.updateAdvisory ? ADVISORY_LABELS[item.updateAdvisory] : "Update"}: v{item.latestVersion}
+                      </Badge>
+                    )}
                   </div>
                 </div>
               </div>
               {item.summary && <p className="text-sm text-muted-foreground">{item.summary}</p>}
+              {item.updateAvailable && item.updateChangelog && (
+                <p className="rounded-md bg-muted px-3 py-2 text-xs">{item.updateChangelog}</p>
+              )}
+              {item.installed && (
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <label className="grid gap-1">
+                    <span className="text-muted-foreground">Updates</span>
+                    <select
+                      className="h-8 rounded-md border bg-background px-2"
+                      value={item.approvalMode ?? "automatic"}
+                      disabled={busy}
+                      onChange={(e) => onSubscription(item, { approvalMode: e.target.value as "automatic" | "manual" })}
+                    >
+                      <option value="automatic">Automatic</option>
+                      <option value="manual">Manual</option>
+                    </select>
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-muted-foreground">Channel</span>
+                    <select
+                      className="h-8 rounded-md border bg-background px-2"
+                      value={item.channel ?? "stable"}
+                      disabled={busy}
+                      onChange={(e) => onSubscription(item, { channel: e.target.value as "stable" | "fast" })}
+                    >
+                      <option value="stable">Stable</option>
+                      <option value="fast">Early access</option>
+                    </select>
+                  </label>
+                </div>
+              )}
               <div className="mt-auto flex flex-wrap gap-2">
                 {item.installed ? (
                   <>
