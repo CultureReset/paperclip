@@ -1,9 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
 import { badRequest, conflict, notFound } from "../errors.js";
 import { pluginRegistryService } from "./plugin-registry.js";
-import { parseStorePayload, storeContentService } from "./store-content.js";
+import { parseStorePayload, storeContentService, storeNextgentSectionSchema } from "./store-content.js";
+import {
+  describePermissions,
+  newPermissions,
+  nextgentSectionOf,
+  nextgentStoreBridge,
+  samePermissions,
+  type NextgentStoreBridge,
+} from "./nextgent-store.js";
 import { MENU_CATALOG, menuFromPayload } from "./store-menu.js";
 
 export const STORE_ITEM_KINDS = ["plugin", "pack", "skill", "automation", "connector"] as const;
@@ -14,6 +23,20 @@ export const STORE_ADVISORY_TYPES = ["security", "bugfix", "enhancement"] as con
 export type StoreAdvisoryType = (typeof STORE_ADVISORY_TYPES)[number];
 export const STORE_APPROVAL_MODES = ["automatic", "manual"] as const;
 export type StoreApprovalMode = (typeof STORE_APPROVAL_MODES)[number];
+
+/** Plugin releases carry free-form payload; only their NEXT GENT section is checked. */
+function parsePluginPayload(payload: Record<string, unknown> | undefined): Record<string, unknown> {
+  const value = payload ?? {};
+  if (value.nextgent !== undefined && value.nextgent !== null) {
+    const parsed = storeNextgentSectionSchema.safeParse(value.nextgent);
+    if (!parsed.success) {
+      throw badRequest(`Release NEXT GENT section is not valid: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
+    }
+    if (parsed.data.kind !== "app") throw badRequest("A plugin item can only be a NEXT GENT app");
+    return { ...value, nextgent: parsed.data };
+  }
+  return value;
+}
 
 /** A "fast" subscription also receives everything released to "stable". */
 function channelsFor(channel: string): StoreChannel[] {
@@ -52,9 +75,18 @@ export interface StoreSubscriptionInput {
  * The platform store. The instance admin publishes items; a company sees an
  * item inside its workspace only after installing it.
  */
-export function storeService(db: Db) {
+export function storeService(db: Db, options: { bridge?: NextgentStoreBridge } = {}) {
   const plugins = pluginRegistryService(db);
   const content = storeContentService(db);
+  const bridge = options.bridge ?? nextgentStoreBridge(db);
+
+  /**
+   * A release that asks for business data the owner has not approved never
+   * applies on its own: the install stays on its version, "needs approval".
+   */
+  function requiresApproval(install: StoreInstallRow, version: StoreVersionRow) {
+    return newPermissions(install.approvedPermissions, nextgentSectionOf(version.payload)).length > 0;
+  }
 
   async function getItem(itemId: string): Promise<StoreItemRow> {
     const item = await db.select().from(storeItems).where(eq(storeItems.id, itemId)).then((rows) => rows[0]);
@@ -81,7 +113,12 @@ export function storeService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
-  /** Put a release's content inside the company, then record the install as on that release. */
+  /**
+   * Put a release's content inside the company, then record the install as on
+   * that release. When the release's data permissions differ from what was
+   * approved, gcr-api-clean re-issues the install's token for the new set;
+   * callers only get here with new permissions after the owner approved them.
+   */
   async function moveInstall(item: StoreItemRow, install: StoreInstallRow, version: StoreVersionRow, userId: string | null) {
     await content.sync(install.companyId, item, version.payload, userId);
     const [updated] = await db
@@ -89,6 +126,9 @@ export function storeService(db: Db) {
       .set({ versionId: version.id, updatedAt: new Date() })
       .where(eq(storeInstalls.id, install.id))
       .returning();
+    if (!samePermissions(install.approvedPermissions, nextgentSectionOf(version.payload))) {
+      await bridge.activate({ item, install: updated, version, userId, firstActivation: false });
+    }
     return updated;
   }
 
@@ -158,7 +198,7 @@ export function storeService(db: Db) {
       const advisoryType = input.advisoryType ?? "enhancement";
       const required = input.required ?? false;
       if (required && advisoryType !== "security") throw badRequest("Only security advisories can be required");
-      const payload = item.kind === "plugin" ? input.payload ?? {} : parseStorePayload(input.payload);
+      const payload = item.kind === "plugin" ? parsePluginPayload(input.payload) : parseStorePayload(input.payload);
       const version = await db.transaction(async (tx) => {
         const existing = await tx
           .select({ id: storeItemVersions.id })
@@ -197,7 +237,10 @@ export function storeService(db: Db) {
             channel === "stable" ? undefined : eq(storeInstalls.channel, "fast"),
           ),
         );
-      const applyTo = reached.filter((install) => required || install.approvalMode === "automatic");
+      const consentNeeded = reached.filter((install) => requiresApproval(install, version));
+      const applyTo = reached.filter(
+        (install) => !consentNeeded.includes(install) && (required || install.approvalMode === "automatic"),
+      );
       // One company's failure must not hold back the others; it keeps its old
       // version and can retry with Update.
       const failedFor: string[] = [];
@@ -212,6 +255,7 @@ export function storeService(db: Db) {
         version,
         appliedTo: applyTo.length - failedFor.length,
         pendingFor: reached.length - applyTo.length,
+        needsApprovalFor: consentNeeded.map((install) => install.companyId),
         failedFor,
       };
     },
@@ -263,6 +307,7 @@ export function storeService(db: Db) {
         const latest = itemVersions.find((version) => channelsFor(channel).includes(version.channel as StoreChannel)) ?? null;
         const current = install ? itemVersions.find((version) => version.id === install.versionId) ?? null : null;
         const updateAvailable = install !== null && latest !== null && install.versionId !== latest.id;
+        const updateNewPermissions = updateAvailable && latest ? newPermissions(install?.approvedPermissions, nextgentSectionOf(latest.payload)) : [];
         const shown = (current ?? latest)?.payload as Record<string, unknown[] | undefined> | undefined;
         const contents = {
           skills: shown?.skills?.length ?? 0,
@@ -287,6 +332,10 @@ export function storeService(db: Db) {
           updateAvailable,
           updateAdvisory: updateAvailable ? latest?.advisoryType ?? null : null,
           updateChangelog: updateAvailable ? latest?.changelog ?? null : null,
+          /** The update asks for business data not yet approved: it waits for the owner. */
+          needsApproval: updateNewPermissions.length > 0,
+          updateNewPermissions,
+          needsAccessTo: describePermissions(nextgentSectionOf((current ?? latest)?.payload)),
           contents,
         };
       });
@@ -299,26 +348,55 @@ export function storeService(db: Db) {
       const channel = subscription.channel ?? "stable";
       const version = await newestFor(itemId, channel);
       if (!version) throw conflict(`${item.name} has no release on the ${channel} channel`);
+      // Plan check and price first: nothing is created for an item the business may not have.
+      const charge = await bridge.assertEntitled(companyId, item.key);
       await applyToCompany(item, companyId, true);
+      const installId = randomUUID();
+      let install: StoreInstallRow | undefined;
+      let activation: { charged: boolean } | null = null;
       try {
         await content.sync(companyId, item, version.payload, userId);
+        [install] = await db
+          .insert(storeInstalls)
+          .values({
+            id: installId,
+            companyId,
+            itemId,
+            versionId: version.id,
+            channel,
+            approvalMode: subscription.approvalMode ?? "automatic",
+            installedByUserId: userId,
+          })
+          .returning();
+        // Installing is the owner's consent to the release's permissions.
+        activation = await bridge.activate({ item, install, version, userId, firstActivation: true });
       } catch (err) {
+        if (install) {
+          // Undo anything gcr-api-clean already issued, then the local rows.
+          const current = await getInstall(companyId, itemId).catch(() => null);
+          if (current) await bridge.deactivate(current).then((finish) => finish()).catch(() => undefined);
+          await db.delete(storeInstalls).where(eq(storeInstalls.id, installId)).catch(() => undefined);
+        }
         await content.remove(companyId, item, userId).catch(() => undefined);
         await applyToCompany(item, companyId, false).catch(() => undefined);
         throw err;
       }
-      const [install] = await db
-        .insert(storeInstalls)
-        .values({
-          companyId,
-          itemId,
-          versionId: version.id,
-          channel,
-          approvalMode: subscription.approvalMode ?? "automatic",
-          installedByUserId: userId,
-        })
-        .returning();
-      return install;
+      const [installed] = await db.select().from(storeInstalls).where(eq(storeInstalls.id, installId));
+      // `charge` is what the plan says this costs; `charged` whether gcr-api-clean billed it now.
+      return { ...installed, charge, charged: activation?.charged ?? false };
+    },
+
+    /** What the install screen shows before the owner says yes: data access with reasons, and the charge. */
+    async consent(companyId: string, itemId: string, channel: StoreChannel = "stable") {
+      const item = await getItem(itemId);
+      const install = await getInstall(companyId, itemId);
+      const version = await newestFor(itemId, install?.channel ?? channel);
+      const result = await bridge.consent(companyId, item, version);
+      return {
+        ...result,
+        installed: install !== null,
+        newPermissions: install && version ? newPermissions(install.approvedPermissions, nextgentSectionOf(version.payload)) : [],
+      };
     },
 
     /** Change a company's channel or approval mode for an installed item. */
@@ -338,17 +416,38 @@ export function storeService(db: Db) {
       const item = await getItem(itemId);
       const install = await getInstall(companyId, itemId);
       if (!install) throw notFound(`${item.name} is not installed`);
+      // gcr-api-clean revokes the install's token and disables its automation first.
+      const finish = await bridge.deactivate(install);
       await content.remove(companyId, item, userId);
       await applyToCompany(item, companyId, false);
       await db.delete(storeInstalls).where(eq(storeInstalls.id, install.id));
+      await finish();
     },
 
-    async updateInstall(companyId: string, itemId: string, userId: string | null = null) {
+    /**
+     * The owner updates an install. A release asking for business data not yet
+     * approved needs `approvePermissions: true`; without it the call answers
+     * 409 with what is being asked for, and nothing changes.
+     */
+    async updateInstall(
+      companyId: string,
+      itemId: string,
+      userId: string | null = null,
+      options: { approvePermissions?: boolean } = {},
+    ) {
       const item = await getItem(itemId);
       const install = await getInstall(companyId, itemId);
       if (!install) throw notFound(`${item.name} is not installed`);
       const latest = await newestFor(itemId, install.channel);
       if (!latest) throw conflict(`${item.name} has no release on the ${install.channel} channel`);
+      const asked = newPermissions(install.approvedPermissions, nextgentSectionOf(latest.payload));
+      if (asked.length > 0 && options.approvePermissions !== true) {
+        throw conflict(`${item.name} ${latest.version} needs access to more business data`, {
+          code: "needs_approval",
+          newPermissions: asked,
+          needsAccessTo: describePermissions(nextgentSectionOf(latest.payload)),
+        });
+      }
       return moveInstall(item, install, latest, userId);
     },
 

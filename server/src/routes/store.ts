@@ -14,6 +14,26 @@ import {
 } from "../services/store.js";
 import { MENU_CATALOG, MENU_KEYS, storeMenuService } from "../services/store-menu.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin } from "./authz.js";
+import { HttpError } from "../errors.js";
+import { withUpstreamDetails } from "./nextgent.js";
+
+/**
+ * Store refusals that carry what the app needs to show: the charge on a
+ * refused entitlement, the new permissions on an update awaiting approval,
+ * and gcr-api-clean's own reason.
+ */
+async function withStoreDetails(res: import("express").Response, run: () => Promise<void>) {
+  try {
+    await withUpstreamDetails(res, run);
+  } catch (error) {
+    const details = error instanceof HttpError ? (error.details as Record<string, unknown> | undefined) : undefined;
+    if (error instanceof HttpError && (details?.code === "needs_approval" || details?.code === "not_entitled")) {
+      res.status(error.status).json({ ...details, error: error.message });
+      return;
+    }
+    throw error;
+  }
+}
 
 const itemKeySchema = z.string().trim().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/, "Use lowercase letters, numbers and dashes");
 
@@ -44,6 +64,12 @@ const addVersionSchema = z.object({
 });
 
 const coreMenuSchema = z.object({ core: z.array(z.enum(MENU_KEYS)) });
+
+/** Updating with new data permissions is the owner's approval of them. */
+const updateInstallSchema = z
+  .object({ approvePermissions: z.boolean().optional() })
+  .optional()
+  .transform((value) => value ?? {});
 
 const subscriptionSchema = z
   .object({
@@ -130,7 +156,9 @@ export function storeRoutes(db: Db) {
   router.post("/companies/:companyId/store/:itemId/install", validate(subscriptionSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertCanManageInstalls(req, access, companyId);
-    res.status(201).json(await store.install(companyId, req.params.itemId as string, req.actor.userId ?? null, req.body));
+    await withStoreDetails(res, async () => {
+      res.status(201).json(await store.install(companyId, req.params.itemId as string, req.actor.userId ?? null, req.body));
+    });
   });
 
   router.patch("/companies/:companyId/store/:itemId", validate(subscriptionSchema), async (req, res) => {
@@ -139,10 +167,19 @@ export function storeRoutes(db: Db) {
     res.json(await store.updateSubscription(companyId, req.params.itemId as string, req.body));
   });
 
-  router.post("/companies/:companyId/store/:itemId/update", async (req, res) => {
+  router.get("/companies/:companyId/store/:itemId/consent", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const channel = req.query.channel === "fast" ? "fast" : "stable";
+    res.json(await store.consent(companyId, req.params.itemId as string, channel));
+  });
+
+  router.post("/companies/:companyId/store/:itemId/update", validate(updateInstallSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertCanManageInstalls(req, access, companyId);
-    res.json(await store.updateInstall(companyId, req.params.itemId as string, req.actor.userId ?? null));
+    await withStoreDetails(res, async () => {
+      res.json(await store.updateInstall(companyId, req.params.itemId as string, req.actor.userId ?? null, req.body));
+    });
   });
 
   router.delete("/companies/:companyId/store/:itemId", async (req, res) => {

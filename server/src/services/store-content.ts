@@ -19,8 +19,37 @@ const resourceKey = z.string().trim().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$
  * What a store release puts inside a company. Every entry has a stable key so
  * a later release can change it in place or drop it.
  */
+/**
+ * NEXT GENT section of a release: which kind of install this is for
+ * gcr-api-clean, the business data it needs (resource:action, each with the
+ * reason shown on the consent screen) and, for an automation that hands work
+ * to an agent, which agent. `itemKey` names another store item when the agent
+ * comes from a separate install; leave it out for an agent in this release.
+ */
+export const NEXTGENT_PERMISSION_PATTERN = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
+export const storeNextgentSectionSchema = z.object({
+  kind: z.enum(["agent", "app", "automation"]),
+  permissions: z
+    .array(
+      z.object({
+        permission: z.string().trim().regex(NEXTGENT_PERMISSION_PATTERN, "Permissions are resource:action, e.g. availability:read"),
+        reason: z.string().trim().min(1).max(500),
+      }),
+    )
+    .default([]),
+  handoff: z
+    .object({
+      agentKey: resourceKey,
+      itemKey: resourceKey.nullish(),
+      title: z.string().trim().min(1).max(200).nullish(),
+    })
+    .nullish(),
+});
+export type StoreNextgentSection = z.infer<typeof storeNextgentSectionSchema>;
+
 export const storePayloadSchema = z
   .object({
+    nextgent: storeNextgentSectionSchema.nullish(),
     /** Menu entries this item turns on, beyond the ones its agents, routines and skills need. */
     menu: z.array(z.enum(MENU_KEYS)).default([]),
     skills: z
@@ -68,6 +97,21 @@ export const storePayloadSchema = z
       if (duplicate) ctx.addIssue({ code: "custom", path: [kind], message: `Duplicate ${kind} key "${duplicate}"` });
     }
     const agentKeys = new Set(payload.agents.map((agent) => agent.key));
+    const nextgent = payload.nextgent;
+    if (nextgent) {
+      const permissions = nextgent.permissions.map((entry) => entry.permission);
+      const duplicate = permissions.find((permission, index) => permissions.indexOf(permission) !== index);
+      if (duplicate) ctx.addIssue({ code: "custom", path: ["nextgent", "permissions"], message: `Duplicate permission "${duplicate}"` });
+      if (nextgent.kind === "agent" && payload.agents.length === 0) {
+        ctx.addIssue({ code: "custom", path: ["nextgent", "kind"], message: "An agent item must declare at least one agent" });
+      }
+      if (nextgent.handoff && nextgent.kind !== "automation") {
+        ctx.addIssue({ code: "custom", path: ["nextgent", "handoff"], message: "Only automations hand work to an agent" });
+      }
+      if (nextgent.handoff && !nextgent.handoff.itemKey && !agentKeys.has(nextgent.handoff.agentKey)) {
+        ctx.addIssue({ code: "custom", path: ["nextgent", "handoff"], message: `Hand-off names unknown agent "${nextgent.handoff.agentKey}"` });
+      }
+    }
     for (const routine of payload.routines) {
       if (routine.agentKey && !agentKeys.has(routine.agentKey)) {
         ctx.addIssue({ code: "custom", path: ["routines"], message: `Routine "${routine.key}" names unknown agent "${routine.agentKey}"` });
@@ -83,6 +127,16 @@ export function parseStorePayload(payload: unknown): StorePayload {
     throw badRequest(`Release content is not valid: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
   }
   return parsed.data;
+}
+
+/**
+ * Resource keys the platform itself binds to an install (e.g. the routine an
+ * automation hands work to). Release payload keys cannot start with "_", so
+ * these never collide with them and a release sync leaves them alone.
+ */
+export const PLATFORM_RESOURCE_KEY_PREFIX = "_";
+export function isPlatformResourceKey(key: string) {
+  return key.startsWith(PLATFORM_RESOURCE_KEY_PREFIX);
 }
 
 type ItemRow = typeof storeItems.$inferSelect;
@@ -337,6 +391,7 @@ export function storeContentService(db: Db) {
       };
       // Routines first so nothing is left assigned to an agent that is going away.
       const dropped = existing
+        .filter((binding) => !isPlatformResourceKey(binding.resourceKey))
         .filter((binding) => !declared[binding.resourceKind as ResourceKind]?.has(binding.resourceKey))
         .sort((a, b) => (a.resourceKind === "routine" ? -1 : 0) - (b.resourceKind === "routine" ? -1 : 0));
       for (const binding of dropped) await removeResource(companyId, binding, userId);
@@ -366,5 +421,6 @@ export function storeContentService(db: Db) {
     },
 
     listResources: bindingsFor,
+    bind,
   };
 }
