@@ -8,10 +8,13 @@ import { normalizeHumanRole } from "../services/company-member-roles.js";
 import {
   STORE_ADVISORY_TYPES,
   STORE_APPROVAL_MODES,
+  STORE_AUDIENCE_MODES,
   STORE_CHANNELS,
+  STORE_DEPLOY_ACTIONS,
   STORE_ITEM_KINDS,
   storeService,
 } from "../services/store.js";
+import { readNextgentConfig } from "../services/nextgent-config.js";
 import { MENU_CATALOG, MENU_KEYS, storeMenuService } from "../services/store-menu.js";
 import { assertBoard, assertCompanyAccess, assertInstanceAdmin } from "./authz.js";
 import { HttpError } from "../errors.js";
@@ -61,6 +64,24 @@ const addVersionSchema = z.object({
   required: z.boolean().default(false),
   changelog: z.string().trim().max(10_000).nullish(),
   payload: z.record(z.string(), z.unknown()).optional(),
+});
+
+const deploySchema = z.object({
+  version: z.string().trim().min(1).max(40),
+  action: z.enum(STORE_DEPLOY_ACTIONS),
+  audience: z.object({
+    mode: z.enum(STORE_AUDIENCE_MODES),
+    companyIds: z.array(z.string().uuid()).max(10_000).optional(),
+    values: z.array(z.string().trim().min(1)).max(100).optional(),
+  }),
+  notes: z.string().trim().max(2_000).nullish(),
+});
+
+const priceSchema = z.object({
+  amountCents: z.number().int().min(0).nullable(),
+  currency: z.string().trim().regex(/^[A-Za-z]{3}$/, "Use a three-letter currency code").nullish(),
+  interval: z.string().trim().min(1).max(40).nullish(),
+  model: z.string().trim().min(1).max(40).nullish(),
 });
 
 const coreMenuSchema = z.object({ core: z.array(z.enum(MENU_KEYS)) });
@@ -127,6 +148,58 @@ export function storeRoutes(db: Db) {
   router.post("/store/admin/items/:itemId/retire", async (req, res) => {
     assertInstanceAdmin(req);
     res.json(await store.retire(req.params.itemId as string));
+  });
+
+  /**
+   * The store's vocabulary for the admin console. Kinds, channels, advisory
+   * types, actions and audiences are what this server accepts (the kinds and
+   * channels are database constraints); price models, intervals and the
+   * default currency come from server settings.
+   */
+  router.get("/store/admin/meta", async (req, res) => {
+    assertInstanceAdmin(req);
+    const pricing = readNextgentConfig().storePricing;
+    res.json({
+      kinds: [...STORE_ITEM_KINDS],
+      channels: [...STORE_CHANNELS],
+      advisoryTypes: [...STORE_ADVISORY_TYPES],
+      approvalModes: [...STORE_APPROVAL_MODES],
+      forceableAdvisory: "security",
+      actions: STORE_DEPLOY_ACTIONS.map((key) => ({ key, force: key === "force" })),
+      audienceModes: STORE_AUDIENCE_MODES.map((key) =>
+        key === "companies" ? { key, needs: "companies" } : key === "channel" ? { key, options: [...STORE_CHANNELS] } : { key },
+      ),
+      priceModels: pricing.models,
+      intervals: pricing.intervals,
+      currency: pricing.defaultCurrency,
+    });
+  });
+
+  router.get("/store/admin/items/:itemId/installs", async (req, res) => {
+    assertInstanceAdmin(req);
+    res.json(await store.listItemInstalls(req.params.itemId as string));
+  });
+
+  router.post("/store/admin/items/:itemId/deploy/preview", validate(deploySchema), async (req, res) => {
+    assertInstanceAdmin(req);
+    res.json(await store.previewDeploy(req.params.itemId as string, req.body));
+  });
+
+  router.post("/store/admin/items/:itemId/deploy", validate(deploySchema), async (req, res) => {
+    assertInstanceAdmin(req);
+    res.status(201).json(await store.deploy(req.params.itemId as string, req.body, req.actor.userId ?? null));
+  });
+
+  router.get("/store/admin/deployments", async (req, res) => {
+    assertInstanceAdmin(req);
+    res.json(await store.listDeployments());
+  });
+
+  router.put("/store/admin/items/:itemId/price", validate(priceSchema), async (req, res) => {
+    assertInstanceAdmin(req);
+    await withUpstreamDetails(res, async () => {
+      res.json(await store.setPrice(req.params.itemId as string, req.body));
+    });
   });
 
   router.get("/store/admin/menu", async (req, res) => {

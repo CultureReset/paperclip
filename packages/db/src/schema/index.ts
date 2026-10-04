@@ -210,5 +210,5 @@ export { aiConnectionDefaults } from "./ai_connection_defaults.js";
 export { aiProviderDefaults } from "./ai_provider_defaults.js";
 export * from "./email.js";
 export { announcementDismissals, announcementPublications } from "./announcement_dismissals.js";
-export { storeItems, storeItemVersions, storeInstalls, storeInstallResources, storeSettings } from "./store.js";
+export { storeItems, storeItemVersions, storeInstalls, storeInstallResources, storeSettings, storeDeployments } from "./store.js";
 export { nextgentBusinessLinks } from "./nextgent_business_links.js";

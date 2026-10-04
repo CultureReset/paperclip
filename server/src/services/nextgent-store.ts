@@ -190,6 +190,18 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
       return chargeOf(entitlement);
     },
 
+    /**
+     * Forward an item's price to gcr-api-clean's billing. Returns its answer,
+     * or null when gcr-api-clean is not configured (dev: price kept locally only).
+     */
+    async setPrice(itemKey: string, price: { amountCents: number; currency: string; interval: string | null; model: string | null }) {
+      if (!gcr.configured) {
+        warnSkipped("price forwarding", { itemKey });
+        return null;
+      }
+      return gcr.setItemPrice(itemKey, price);
+    },
+
     /** The consent screen: permissions with reasons, and the charge, without installing. */
     async consent(companyId: string, item: ItemRow, version: VersionRow | null) {
       const section = nextgentSectionOf(version?.payload);

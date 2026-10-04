@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, timestamp, jsonb, boolean, index, uniqueIndex, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, jsonb, boolean, integer, index, uniqueIndex, check } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 
 /**
@@ -19,6 +19,14 @@ export const storeItems = pgTable(
     iconUrl: text("icon_url"),
     /** For kind = "plugin": the plugin_key this item installs. */
     pluginKey: text("plugin_key"),
+    /**
+     * The item's price, as the instance admin set it. gcr-api-clean's billing
+     * holds the authoritative copy (it bills installs); this one is for display.
+     */
+    priceAmountCents: integer("price_amount_cents"),
+    priceCurrency: text("price_currency"),
+    priceInterval: text("price_interval"),
+    priceModel: text("price_model"),
     status: text("status").notNull().default("draft"),
     latestVersionId: uuid("latest_version_id"),
     createdByUserId: text("created_by_user_id"),
@@ -31,7 +39,7 @@ export const storeItems = pgTable(
     statusIdx: index("store_items_status_idx").on(table.status),
     kindCheck: check(
       "store_items_kind_check",
-      sql`${table.kind} IN ('plugin', 'pack', 'skill', 'automation', 'connector')`,
+      sql`${table.kind} IN ('plugin', 'pack', 'skill', 'automation', 'connector', 'agent', 'app', 'box-release')`,
     ),
     statusCheck: check("store_items_status_check", sql`${table.status} IN ('draft', 'published', 'retired')`),
     pluginKeyCheck: check(
@@ -147,3 +155,33 @@ export const storeSettings = pgTable("store_settings", {
   coreMenu: jsonb("core_menu").$type<string[]>(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * A push of one release to an audience of companies (all, chosen companies,
+ * or a channel), as the instance admin sent it, with what it reached.
+ */
+export const storeDeployments = pgTable(
+  "store_deployments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    itemId: uuid("item_id").notNull().references(() => storeItems.id, { onDelete: "cascade" }),
+    versionId: uuid("version_id").references(() => storeItemVersions.id, { onDelete: "set null" }),
+    version: text("version").notNull(),
+    action: text("action").notNull(),
+    audience: jsonb("audience").$type<Record<string, unknown>>().notNull().default({}),
+    notes: text("notes"),
+    status: text("status").notNull().default("completed"),
+    targeted: integer("targeted").notNull().default(0),
+    applied: integer("applied").notNull().default(0),
+    skipped: integer("skipped").notNull().default(0),
+    needsConsent: integer("needs_consent").notNull().default(0),
+    failed: integer("failed").notNull().default(0),
+    reasons: jsonb("reasons").$type<Record<string, number>>().notNull().default({}),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    itemCreatedIdx: index("store_deployments_item_created_idx").on(table.itemId, table.createdAt),
+    createdIdx: index("store_deployments_created_idx").on(table.createdAt),
+  }),
+);

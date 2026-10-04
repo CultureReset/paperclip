@@ -139,6 +139,14 @@ export function isPlatformResourceKey(key: string) {
   return key.startsWith(PLATFORM_RESOURCE_KEY_PREFIX);
 }
 
+/**
+ * Kinds whose releases carry no company content: a plugin turns a plugin on,
+ * and a box-release is a signed computer release plan the computers fetch.
+ */
+export function itemHasContent(kind: string) {
+  return kind !== "plugin" && kind !== "box-release";
+}
+
 type ItemRow = typeof storeItems.$inferSelect;
 type Binding = typeof storeInstallResources.$inferSelect;
 type ResourceKind = "skill" | "agent" | "routine";
@@ -253,7 +261,14 @@ export function storeContentService(db: Db) {
     declaration: StorePayload["agents"][number],
     binding: Binding | undefined,
     userId: string | null,
+    installId: string | null,
   ) {
+    // Lets the apps tie an agent to its store item and install without guessing by name.
+    const storeMetadata = {
+      storeItem: { itemId: item.id, itemKey: item.key, resourceKey: declaration.key },
+      storeItemKey: item.key,
+      ...(installId ? { installId } : {}),
+    };
     const fields = {
       name: declaration.name,
       role: declaration.role,
@@ -262,7 +277,8 @@ export function storeContentService(db: Db) {
     };
     const existing = binding ? ((await agentSvc.getById(binding.resourceId)) as Agent | null) : null;
     if (existing && existing.status !== "terminated") {
-      const updated = (await agentSvc.update(existing.id, fields, { recordRevision: { source: `store:${item.key}` }, allowPendingApprovalConfigUpdate: true })) as Agent | null;
+      const metadata = { ...((existing.metadata as Record<string, unknown> | null) ?? {}), ...storeMetadata };
+      const updated = (await agentSvc.update(existing.id, { ...fields, metadata }, { recordRevision: { source: `store:${item.key}` }, allowPendingApprovalConfigUpdate: true })) as Agent | null;
       await writeInstructions(updated ?? existing, declaration.instructions);
       return existing.id;
     }
@@ -279,7 +295,7 @@ export function storeContentService(db: Db) {
       permissions: {},
       budgetMonthlyCents: 0,
       status: requiresApproval ? "pending_approval" : "idle",
-      metadata: { storeItem: { itemId: item.id, itemKey: item.key, resourceKey: declaration.key } },
+      metadata: storeMetadata,
       spentMonthlyCents: 0,
       lastHeartbeatAt: null,
     })) as Agent;
@@ -358,8 +374,8 @@ export function storeContentService(db: Db) {
 
   return {
     /** Make the company's copy of an item match `payload`. */
-    async sync(companyId: string, item: ItemRow, payload: unknown, userId: string | null) {
-      if (item.kind === "plugin") return;
+    async sync(companyId: string, item: ItemRow, payload: unknown, userId: string | null, installId: string | null = null) {
+      if (!itemHasContent(item.kind)) return;
       const content = parseStorePayload(payload);
       const existing = await bindingsFor(companyId, item.id);
       const bindingFor = (kind: ResourceKind, key: string) =>
@@ -374,7 +390,7 @@ export function storeContentService(db: Db) {
 
       const agentIds = new Map<string, string>();
       for (const agent of content.agents) {
-        const id = await syncAgent(companyId, item, agent, bindingFor("agent", agent.key), userId);
+        const id = await syncAgent(companyId, item, agent, bindingFor("agent", agent.key), userId, installId);
         agentIds.set(agent.key, id);
         await bind(companyId, item.id, "agent", agent.key, id);
       }

@@ -35,6 +35,15 @@ Public. The verification keys (`{ "keys": [ … ] }`, public halves only).
 The signing key is `NEXTGENT_JWT_PRIVATE_KEY`; without it a temporary key is
 generated at start and a warning logged (dev only).
 
+```
+POST /api/admin/business-token
+```
+
+Instance admins only (contract §12). Same token shape with
+`role: "instance_admin"` and no `company_id`, for Plat-admin's fleet-wide and
+admin screens. gcr-api-clean honours it only for ids in
+`platform_admins.paperclip_user_id`; admin routes still name the slug.
+
 ## Business link
 
 ```
@@ -109,6 +118,20 @@ POST /api/nextgent/conversations
 `companyId` may be `"nextgent"`, which means `NEXTGENT_PLATFORM_COMPANY_ID`.
 Recorded in Activity (`nextgent.conversation`). Response `201 { "id" }`.
 
+```
+GET /api/companies/{companyId}/receipts?limit=50&offset=0
+```
+
+Any member (not agents). Receipts newest first:
+
+```json
+{ "receipts": [{ "id", "companyId", "taskId", "task": { "id", "identifier", "title" },
+  "action", "target", "oldValue", "newValue", "device", "verified", "at",
+  "evidence", "recordedAt" }], "total": 12, "limit": 50, "offset": 0 }
+```
+
+`limit` is 1–200 (default 50).
+
 ## Setup jobs
 
 - **Sign-up** (company created through `POST /api/companies`, self-serve or
@@ -166,6 +189,10 @@ reason, `changesThings` for write/send), `allowed`, `reason`, and
 Any failure rolls the install back. The response adds `charge` (the price)
 and `charged` (whether gcr-api-clean billed it now).
 
+Agents an install creates carry `metadata.storeItemKey`, `metadata.installId`
+and `metadata.storeItem` (`itemId`, `itemKey`, `resourceKey`), so apps can tie
+an agent to its store item without matching names.
+
 Uninstall calls `DELETE /api/nextgent/installs/{installId}` first, then removes
 the content and the token secret.
 
@@ -179,3 +206,42 @@ permissions.
 
 Without `GCR_API_URL` and `NEXTGENT_SERVICE_SECRET`, entitlement and
 registration are skipped with a warning (dev only).
+
+## Store administration (contract §12)
+
+Instance admins only.
+
+- `GET /api/store/admin/meta` — `kinds` (`plugin`, `pack`, `skill`,
+  `automation`, `connector`, `agent`, `app`, `box-release`; the database
+  constraint), `channels`, `advisoryTypes`, `approvalModes`,
+  `forceableAdvisory`, `actions` (`apply`, `force` with `force: true`),
+  `audienceModes` (`all`; `companies` with `needs: "companies"`; `channel`
+  with its `options`), and `priceModels`, `intervals`, `currency` from
+  `NEXTGENT_STORE_PRICE_MODELS`, `NEXTGENT_STORE_PRICE_INTERVALS`,
+  `NEXTGENT_STORE_CURRENCY`.
+- `POST /api/store/admin/items/{itemId}/deploy/preview` and `…/deploy` —
+  body `{ version, action, audience: { mode, companyIds?, values? }, notes? }`.
+  The preview answers `{ targeted, apply, skip, needsConsent, reasons,
+  companies: [{ companyId, outcome, reason }] }` without changing anything.
+  `apply` moves installs on automatic updates and on a channel the release is
+  on; `force` also moves manual ones and other channels (security fixes,
+  rollbacks). A release asking for new data access is never pushed or forced
+  (`needs_consent`). Skip reasons: `not_installed`, `already_on_version`,
+  `needs_consent`, `manual_updates`, `other_channel`, `failed`. `deploy`
+  records the push and answers `201 { deployment, applied, skipped,
+  needsConsent, reasons, companies, failedFor }`.
+- `GET /api/store/admin/deployments` — pushes, newest first, with
+  `itemName`, `itemKey`, `kind`.
+- `GET /api/store/admin/items/{itemId}/installs` — each company with the item:
+  `installId`, `companyId`, `companyName`, `version`, `latestVersion`,
+  `channel`, `approvalMode`, `status` (`current` | `update_available` |
+  `needs_approval`), `approvedPermissions`, `installedAt`.
+- `PUT /api/store/admin/items/{itemId}/price` — `{ amountCents, currency?,
+  interval?, model? }`. Forwarded first to gcr-api-clean
+  `PUT /api/nextgent/items/{itemKey}/price` (signed), which entitlement and
+  install charges read; only then stored on the item (`price` in
+  `GET /api/store/admin/items`). Without a currency, `NEXTGENT_STORE_CURRENCY`
+  is used; with neither, `422`.
+- A `box-release` item's release payload is `{ plan, signature }` (a signed
+  nextgent-ghost-image plan); a release without a signature is refused. It
+  puts nothing inside a company; the computers verify the signature.

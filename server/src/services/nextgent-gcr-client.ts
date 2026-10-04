@@ -67,7 +67,7 @@ export function gcrClient(options: { config?: NextgentConfig; fetch?: FetchLike 
   const config = options.config ?? readNextgentConfig();
   const doFetch: FetchLike = options.fetch ?? ((url, init) => fetch(url, init));
 
-  async function call<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
+  async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
     if (!gcrConfigured(config)) throw new GcrNotConfiguredError();
     const rawBody = body === undefined ? "" : JSON.stringify(body);
     const headers: Record<string, string> = {
@@ -124,6 +124,11 @@ export function gcrClient(options: { config?: NextgentConfig; fetch?: FetchLike 
       ),
     uninstall: (installId: string) =>
       call<Record<string, unknown>>("DELETE", `/api/nextgent/installs/${encodeURIComponent(installId)}`),
+    /** gcr-api-clean billing's price for an item, used by entitlement and install charges. */
+    setItemPrice: (
+      itemKey: string,
+      price: { amountCents: number; currency: string; interval: string | null; model: string | null },
+    ) => call<Record<string, unknown>>("PUT", `/api/nextgent/items/${encodeURIComponent(itemKey)}/price`, price),
     entitlement: (companyId: string, itemKey: string) =>
       call<GcrEntitlement>(
         "GET",

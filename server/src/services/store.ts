@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
-import { badRequest, conflict, notFound } from "../errors.js";
+import { companies, storeDeployments, storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
+import { badRequest, conflict, notFound, unprocessable } from "../errors.js";
+import { readNextgentConfig } from "./nextgent-config.js";
 import { pluginRegistryService } from "./plugin-registry.js";
 import { parseStorePayload, storeContentService, storeNextgentSectionSchema } from "./store-content.js";
 import {
@@ -15,7 +16,8 @@ import {
 } from "./nextgent-store.js";
 import { MENU_CATALOG, menuFromPayload } from "./store-menu.js";
 
-export const STORE_ITEM_KINDS = ["plugin", "pack", "skill", "automation", "connector"] as const;
+/** Mirrors the store_items_kind_check constraint (packages/db/src/schema/store.ts). */
+export const STORE_ITEM_KINDS = ["plugin", "pack", "skill", "automation", "connector", "agent", "app", "box-release"] as const;
 export type StoreItemKind = (typeof STORE_ITEM_KINDS)[number];
 export const STORE_CHANNELS = ["stable", "fast"] as const;
 export type StoreChannel = (typeof STORE_CHANNELS)[number];
@@ -36,6 +38,29 @@ function parsePluginPayload(payload: Record<string, unknown> | undefined): Recor
     return { ...value, nextgent: parsed.data };
   }
   return value;
+}
+
+/**
+ * A box-release is a signed nextgent-ghost-image plan: `plan` (ghost.json)
+ * and its detached `signature`. The computers verify the signature; the
+ * store only refuses a release that has none.
+ */
+function parseBoxReleasePayload(payload: Record<string, unknown> | undefined): Record<string, unknown> {
+  const value = payload ?? {};
+  const plan = value.plan;
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) throw badRequest("A box-release needs its plan (ghost.json) as an object");
+  if (typeof value.signature !== "string" || !value.signature.trim()) throw badRequest("A box-release needs its signature");
+  return { plan, signature: value.signature.trim() };
+}
+
+function priceOf(item: StoreItemRow) {
+  if (item.priceAmountCents === null && !item.priceModel) return null;
+  return {
+    amountCents: item.priceAmountCents ?? 0,
+    currency: item.priceCurrency,
+    interval: item.priceInterval,
+    model: item.priceModel,
+  };
 }
 
 /** A "fast" subscription also receives everything released to "stable". */
@@ -66,6 +91,27 @@ export interface StoreVersionInput {
   payload?: Record<string, unknown>;
 }
 
+/** How a push moves installs. `force` also moves installs on manual updates. */
+export const STORE_DEPLOY_ACTIONS = ["apply", "force"] as const;
+export type StoreDeployAction = (typeof STORE_DEPLOY_ACTIONS)[number];
+/** Who a push reaches: every install, chosen companies, or the installs on given channels. */
+export const STORE_AUDIENCE_MODES = ["all", "companies", "channel"] as const;
+export type StoreAudienceMode = (typeof STORE_AUDIENCE_MODES)[number];
+
+export interface StoreDeployInput {
+  version: string;
+  action: StoreDeployAction;
+  audience: { mode: StoreAudienceMode; companyIds?: string[]; values?: string[] };
+  notes?: string | null;
+}
+
+export interface StorePriceInput {
+  amountCents: number | null;
+  currency?: string | null;
+  interval?: string | null;
+  model?: string | null;
+}
+
 export interface StoreSubscriptionInput {
   channel?: StoreChannel;
   approvalMode?: StoreApprovalMode;
@@ -75,7 +121,7 @@ export interface StoreSubscriptionInput {
  * The platform store. The instance admin publishes items; a company sees an
  * item inside its workspace only after installing it.
  */
-export function storeService(db: Db, options: { bridge?: NextgentStoreBridge } = {}) {
+export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; defaultCurrency?: string | null } = {}) {
   const plugins = pluginRegistryService(db);
   const content = storeContentService(db);
   const bridge = options.bridge ?? nextgentStoreBridge(db);
@@ -120,7 +166,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge } =
    * callers only get here with new permissions after the owner approved them.
    */
   async function moveInstall(item: StoreItemRow, install: StoreInstallRow, version: StoreVersionRow, userId: string | null) {
-    await content.sync(install.companyId, item, version.payload, userId);
+    await content.sync(install.companyId, item, version.payload, userId, install.id);
     const [updated] = await db
       .update(storeInstalls)
       .set({ versionId: version.id, updatedAt: new Date() })
@@ -130,6 +176,65 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge } =
       await bridge.activate({ item, install: updated, version, userId, firstActivation: false });
     }
     return updated;
+  }
+
+  interface DeployPlanEntry {
+    companyId: string;
+    install: StoreInstallRow | null;
+    outcome: "apply" | "skip";
+    reason: string | null;
+    needsConsent: boolean;
+  }
+
+  /** Decide, per company in the audience, whether a push moves its install and why not. */
+  async function planDeploy(itemId: string, input: StoreDeployInput) {
+    const item = await getItem(itemId);
+    const version = await db
+      .select()
+      .from(storeItemVersions)
+      .where(and(eq(storeItemVersions.itemId, itemId), eq(storeItemVersions.version, input.version)))
+      .then((rows) => rows[0] ?? null);
+    if (!version) throw notFound(`${item.name} has no version ${input.version}`);
+    const installs = await db.select().from(storeInstalls).where(eq(storeInstalls.itemId, itemId));
+    const mode = input.audience.mode;
+    let targets: Array<{ companyId: string; install: StoreInstallRow | null }>;
+    if (mode === "companies") {
+      const ids = [...new Set(input.audience.companyIds ?? [])];
+      if (ids.length === 0) throw badRequest("Choose at least one company");
+      targets = ids.map((companyId) => ({ companyId, install: installs.find((install) => install.companyId === companyId) ?? null }));
+    } else if (mode === "channel") {
+      const channels = new Set(input.audience.values ?? []);
+      if (channels.size === 0) throw badRequest("Choose at least one channel");
+      targets = installs.filter((install) => channels.has(install.channel)).map((install) => ({ companyId: install.companyId, install }));
+    } else {
+      targets = installs.map((install) => ({ companyId: install.companyId, install }));
+    }
+    const plan: DeployPlanEntry[] = targets.map(({ companyId, install }) => {
+      const skip = (reason: string, needsConsent = false): DeployPlanEntry => ({ companyId, install, outcome: "skip", reason, needsConsent });
+      if (!install) return skip("not_installed");
+      if (install.versionId === version.id) return skip("already_on_version");
+      // New data access is always offered to the owner, never pushed or forced.
+      if (requiresApproval(install, version)) return skip("needs_consent", true);
+      if (input.action !== "force") {
+        if (install.approvalMode !== "automatic") return skip("manual_updates");
+        if (!channelsFor(install.channel).includes(version.channel as StoreChannel)) return skip("other_channel");
+      }
+      return { companyId, install, outcome: "apply", reason: null, needsConsent: false };
+    });
+    return { item, version, plan };
+  }
+
+  function summarize(plan: DeployPlanEntry[]) {
+    const reasons: Record<string, number> = {};
+    for (const entry of plan) if (entry.reason) reasons[entry.reason] = (reasons[entry.reason] ?? 0) + 1;
+    return {
+      targeted: plan.length,
+      apply: plan.filter((entry) => entry.outcome === "apply").length,
+      skip: plan.filter((entry) => entry.outcome === "skip").length,
+      needsConsent: plan.filter((entry) => entry.needsConsent).length,
+      reasons,
+      companies: plan.map((entry) => ({ companyId: entry.companyId, outcome: entry.outcome, reason: entry.reason })),
+    };
   }
 
   /** Turn the item's effect on or off inside one company. */
@@ -160,6 +265,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge } =
       const countByItem = new Map(installCounts.map((row) => [row.itemId, Number(row.installs)]));
       return items.map((item) => ({
         ...item,
+        price: priceOf(item),
         installCount: countByItem.get(item.id) ?? 0,
         versions: versions.filter((version) => version.itemId === item.id),
       }));
@@ -198,7 +304,16 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge } =
       const advisoryType = input.advisoryType ?? "enhancement";
       const required = input.required ?? false;
       if (required && advisoryType !== "security") throw badRequest("Only security advisories can be required");
-      const payload = item.kind === "plugin" ? parsePluginPayload(input.payload) : parseStorePayload(input.payload);
+      const payload =
+        item.kind === "plugin"
+          ? parsePluginPayload(input.payload)
+          : item.kind === "box-release"
+            ? parseBoxReleasePayload(input.payload)
+            : parseStorePayload(input.payload);
+      const declared = nextgentSectionOf(payload);
+      if (declared && (item.kind === "agent" || item.kind === "app" || item.kind === "automation") && declared.kind !== item.kind) {
+        throw badRequest(`A ${item.kind} item's release must declare nextgent.kind "${item.kind}"`);
+      }
       const version = await db.transaction(async (tx) => {
         const existing = await tx
           .select({ id: storeItemVersions.id })
@@ -355,7 +470,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge } =
       let install: StoreInstallRow | undefined;
       let activation: { charged: boolean } | null = null;
       try {
-        await content.sync(companyId, item, version.payload, userId);
+        await content.sync(companyId, item, version.payload, userId, installId);
         [install] = await db
           .insert(storeInstalls)
           .values({
@@ -410,6 +525,125 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge } =
         .where(eq(storeInstalls.id, install.id))
         .returning();
       return updated;
+    },
+
+    // ----- Admin: push, installs, price -------------------------------------
+
+    /** Every company that has the item, with where it stands. */
+    async listItemInstalls(itemId: string) {
+      await getItem(itemId);
+      const rows = await db
+        .select({ install: storeInstalls, companyName: companies.name })
+        .from(storeInstalls)
+        .innerJoin(companies, eq(companies.id, storeInstalls.companyId))
+        .where(eq(storeInstalls.itemId, itemId))
+        .orderBy(asc(companies.name));
+      const versions = await db.select().from(storeItemVersions).where(eq(storeItemVersions.itemId, itemId)).orderBy(desc(storeItemVersions.createdAt));
+      return rows.map(({ install, companyName }) => {
+        const current = versions.find((version) => version.id === install.versionId) ?? null;
+        const latest = versions.find((version) => channelsFor(install.channel).includes(version.channel as StoreChannel)) ?? null;
+        // A push can put an install ahead of its channel (e.g. forced onto a fast release).
+        const behind = latest !== null && latest.id !== install.versionId && (!current || latest.createdAt > current.createdAt);
+        const needsApproval = behind && latest ? requiresApproval(install, latest) : false;
+        return {
+          installId: install.id,
+          companyId: install.companyId,
+          companyName,
+          version: current?.version ?? null,
+          latestVersion: latest?.version ?? null,
+          channel: install.channel,
+          approvalMode: install.approvalMode,
+          status: needsApproval ? "needs_approval" : behind ? "update_available" : "current",
+          approvedPermissions: install.approvedPermissions ?? [],
+          installedAt: install.createdAt,
+          updatedAt: install.updatedAt,
+        };
+      });
+    },
+
+    /** What a push would do, install by install, without changing anything. */
+    async previewDeploy(itemId: string, input: StoreDeployInput) {
+      const { plan } = await planDeploy(itemId, input);
+      return summarize(plan);
+    },
+
+    /** Push a release to an audience and record it. One company's failure does not stop the rest. */
+    async deploy(itemId: string, input: StoreDeployInput, userId: string | null) {
+      const { item, version, plan } = await planDeploy(itemId, input);
+      const failedFor: string[] = [];
+      for (const entry of plan) {
+        if (entry.outcome !== "apply" || !entry.install) continue;
+        try {
+          await moveInstall(item, entry.install, version, userId);
+        } catch {
+          entry.outcome = "skip";
+          entry.reason = "failed";
+          failedFor.push(entry.companyId);
+        }
+      }
+      const summary = summarize(plan);
+      const [deployment] = await db
+        .insert(storeDeployments)
+        .values({
+          itemId,
+          versionId: version.id,
+          version: version.version,
+          action: input.action,
+          audience: input.audience as Record<string, unknown>,
+          notes: input.notes ?? null,
+          status: failedFor.length === 0 ? "completed" : summary.apply > 0 ? "partial" : "failed",
+          targeted: summary.targeted,
+          applied: summary.apply,
+          skipped: summary.skip,
+          needsConsent: summary.needsConsent,
+          failed: failedFor.length,
+          reasons: summary.reasons,
+          createdByUserId: userId,
+        })
+        .returning();
+      return { deployment, ...summary, applied: summary.apply, skipped: summary.skip, failedFor };
+    },
+
+    async listDeployments(limit = 200) {
+      const rows = await db
+        .select({ deployment: storeDeployments, itemName: storeItems.name, itemKey: storeItems.key, kind: storeItems.kind })
+        .from(storeDeployments)
+        .innerJoin(storeItems, eq(storeItems.id, storeDeployments.itemId))
+        .orderBy(desc(storeDeployments.createdAt))
+        .limit(limit);
+      return rows.map(({ deployment, itemName, itemKey, kind }) => ({ ...deployment, itemName, itemKey, kind }));
+    },
+
+    /**
+     * Set an item's price. gcr-api-clean's billing is told first, since it is
+     * what entitlement and install charges read; only then is it shown here.
+     */
+    async setPrice(itemId: string, input: StorePriceInput) {
+      const item = await getItem(itemId);
+      const amountCents = input.amountCents ?? 0;
+      if (!Number.isInteger(amountCents) || amountCents < 0) throw badRequest("amountCents must be a whole number of cents, 0 or more");
+      const currency = (input.currency ?? options.defaultCurrency ?? readNextgentConfig().storePricing.defaultCurrency)?.trim().toLowerCase() ?? null;
+      if (!currency) throw unprocessable("Send a currency, or set NEXTGENT_STORE_CURRENCY on the server");
+      const price = { amountCents, currency, interval: input.interval?.trim() || null, model: input.model?.trim() || null };
+      const billing = await bridge.setPrice(item.key, price);
+      const [updated] = await db
+        .update(storeItems)
+        .set({
+          priceAmountCents: price.amountCents,
+          priceCurrency: price.currency,
+          priceInterval: price.interval,
+          priceModel: price.model,
+          updatedAt: new Date(),
+        })
+        .where(eq(storeItems.id, itemId))
+        .returning();
+      return {
+        itemId,
+        itemKey: item.key,
+        price: priceOf(updated),
+        billing,
+        ...(billing === null ? { warning: "gcr-api-clean is not configured; the price is not billed" } : {}),
+      };
     },
 
     async uninstall(companyId: string, itemId: string, userId: string | null = null) {

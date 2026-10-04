@@ -21,6 +21,7 @@ const config: NextgentConfig = {
   assistant: { name: null, instructionsFile: null, adapterType: null },
   platformCompanyId: null,
   businessTokenTtlSeconds: 300,
+  storePricing: { models: [], intervals: [], defaultCurrency: null },
 };
 
 function recordingFetch(response: { status?: number; body?: unknown } = {}) {

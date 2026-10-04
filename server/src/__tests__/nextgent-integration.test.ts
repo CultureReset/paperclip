@@ -49,6 +49,7 @@ function configWith(overrides: Partial<NextgentConfig> = {}): NextgentConfig {
     assistant: { name: "Assistant", instructionsFile: null, adapterType: "process" },
     platformCompanyId: null,
     businessTokenTtlSeconds: 300,
+    storePricing: { models: [], intervals: [], defaultCurrency: null },
     ...overrides,
   };
 }
@@ -280,6 +281,7 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       });
 
       const [booker] = await db.select().from(agents).where(eq(agents.companyId, companyId));
+      expect(booker.metadata).toMatchObject({ storeItemKey: "booker", installId: install.id });
       const [config] = await db.select().from(pluginConfig).where(eq(pluginConfig.pluginId, plugin.id));
       expect((config.configJson as Record<string, Record<string, unknown>>).agentTokens[booker.id]).toEqual({
         type: "secret_ref",
@@ -401,6 +403,95 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
     });
   });
 
+  describe("store admin (contract §12)", () => {
+    const plainRelease = { agents: [{ key: "helper", name: "Helper", adapterType: "process" }] };
+
+    it("previews and pushes a release to an audience, recording the push", async () => {
+      const auto = await seedCompany("PA1");
+      const manual = await seedCompany("PA2");
+      const outsider = await seedCompany("PA3");
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      const item = await store.create({ key: "helper", kind: "agent", name: "Helper" }, null);
+      await store.addVersion(item.id, { version: "1.0.0", payload: plainRelease }, null);
+      await store.publish(item.id);
+      await store.install(auto, item.id, null);
+      await store.install(manual, item.id, null, { approvalMode: "manual" });
+      // An older-style release the auto company is moved off of, so both are behind.
+      await store.addVersion(item.id, { version: "1.1.0", channel: "fast", payload: plainRelease }, null);
+
+      const all = { version: "1.1.0", action: "apply" as const, audience: { mode: "all" as const } };
+      const preview = await store.previewDeploy(item.id, all);
+      expect(preview).toMatchObject({ targeted: 2, apply: 0, skip: 2, reasons: { other_channel: 1, manual_updates: 1 } });
+
+      const forced = await store.previewDeploy(item.id, { ...all, action: "force" });
+      expect(forced).toMatchObject({ targeted: 2, apply: 2 });
+
+      const chosen = await store.deploy(item.id, { ...all, action: "force", audience: { mode: "companies", companyIds: [manual, outsider] } }, "admin");
+      expect(chosen).toMatchObject({ applied: 1, skipped: 1, reasons: { not_installed: 1 } });
+      const installs = await store.listItemInstalls(item.id);
+      expect(installs.find((row) => row.companyId === manual)).toMatchObject({ version: "1.1.0", status: "current" });
+      expect(installs.find((row) => row.companyId === auto)).toMatchObject({ version: "1.0.0", channel: "stable" });
+
+      const history = await store.listDeployments();
+      expect(history[0]).toMatchObject({ itemName: "Helper", version: "1.1.0", action: "force", applied: 1, skipped: 1, status: "completed" });
+    });
+
+    it("never pushes new data access, even forced", async () => {
+      const companyId = await seedCompany("PNC");
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      const item = await store.create({ key: "helper", kind: "agent", name: "Helper" }, null);
+      await store.addVersion(item.id, { version: "1.0.0", payload: { ...plainRelease, nextgent: { kind: "agent", permissions: [] } } }, null);
+      await store.publish(item.id);
+      await store.install(companyId, item.id, null);
+      await store.addVersion(item.id, {
+        version: "2.0.0",
+        payload: { ...plainRelease, nextgent: { kind: "agent", permissions: [{ permission: "menu:write", reason: "x" }] } },
+      }, null);
+      const result = await store.deploy(item.id, { version: "2.0.0", action: "force", audience: { mode: "all" } }, null);
+      expect(result).toMatchObject({ applied: 0, needsConsent: 1, reasons: { needs_consent: 1 } });
+    });
+
+    it("rejects a release whose nextgent kind does not match the item", async () => {
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      const item = await store.create({ key: "an-app", kind: "app", name: "App" }, null);
+      await expect(store.addVersion(item.id, { version: "1", payload: { nextgent: { kind: "automation" } } }, null)).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("accepts signed box releases and refuses unsigned ones", async () => {
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      const item = await store.create({ key: "box", kind: "box-release", name: "Box" }, null);
+      await expect(store.addVersion(item.id, { version: "1", payload: { plan: { modules: [] } } }, null)).rejects.toMatchObject({ status: 400 });
+      const { version } = await store.addVersion(item.id, { version: "1", payload: { plan: { modules: [] }, signature: "-----BEGIN SSH SIGNATURE-----" } }, null);
+      expect(version.payload).toEqual({ plan: { modules: [] }, signature: "-----BEGIN SSH SIGNATURE-----" });
+      await store.publish(item.id);
+      const companyId = await seedCompany("BOX");
+      await store.install(companyId, item.id, null);
+    });
+
+    it("forwards a price to gcr-api-clean billing before showing it", async () => {
+      const { calls, fetch } = fakeUpstream({
+        "PUT /api/nextgent/items/priced/price": (body) => ({ body: { itemKey: "priced", ...body, stripePriceId: null } }),
+      });
+      const store = storeService(db, {
+        bridge: nextgentStoreBridge(db, { config: configWith(), fetch }),
+        defaultCurrency: "usd",
+      });
+      const item = await store.create({ key: "priced", kind: "app", name: "Priced" }, null);
+      const saved = await store.setPrice(item.id, { amountCents: 1200, interval: "month", model: "flat" });
+      expect(calls[0]).toMatchObject({ method: "PUT", body: { amountCents: 1200, currency: "usd", interval: "month", model: "flat" } });
+      expect(saved.price).toEqual({ amountCents: 1200, currency: "usd", interval: "month", model: "flat" });
+      expect((await store.listAll())[0].price).toEqual(saved.price);
+
+      const failing = storeService(db, {
+        bridge: nextgentStoreBridge(db, { config: configWith(), fetch: fakeUpstream({}).fetch }),
+        defaultCurrency: "usd",
+      });
+      await expect(failing.setPrice(item.id, { amountCents: 99 })).rejects.toBeTruthy();
+      expect((await store.listAll())[0].price?.amountCents).toBe(1200);
+      await expect(storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith() }) }).setPrice(item.id, { amountCents: 1 })).rejects.toMatchObject({ status: 422 });
+    });
+  });
+
   it("attaches a receipt to its task and records it in Activity", async () => {
     const companyId = await seedCompany("RCP");
     const [issue] = await db.insert(issues).values({ companyId, title: "Confirm entertainer", identifier: "RCP-1" } as never).returning();
@@ -422,6 +513,13 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
     expect(comments[0].body).toContain("Verified");
     const activity = await db.select().from(activityLog).where(eq(activityLog.action, "nextgent.receipt"));
     expect(activity[0]).toMatchObject({ companyId, entityType: "issue", entityId: issue.id });
+
+    await inbound.recordReceipt({ companyId, action: "hours.update", target: "hours", verified: false, at: "2026-10-04T13:00:00Z" });
+    const listed = await inbound.listReceipts(companyId, { limit: 10, offset: 0 });
+    expect(listed.total).toBe(2);
+    expect(listed.receipts[0]).toMatchObject({ action: "hours.update", verified: false, task: null });
+    expect(listed.receipts[1]).toMatchObject({ id: result.id, action: "sms.send", taskId: issue.id, task: { identifier: "RCP-1" }, newValue: "Confirm 7 PM" });
+    expect((await inbound.listReceipts(companyId, { limit: 1, offset: 1 })).receipts).toHaveLength(1);
 
     await expect(inbound.recordReceipt({ companyId, taskId: "RCP-404", action: "a", target: "t", verified: false, at: "now" })).rejects.toMatchObject({ status: 404 });
     await expect(inbound.recordReceipt({ companyId: randomUUID(), action: "a", target: "t", verified: false, at: "now" })).rejects.toMatchObject({ status: 404 });

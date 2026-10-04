@@ -58,6 +58,19 @@ export interface NextgentConfig {
   platformCompanyId: string | null;
   /** Business-token lifetime in seconds (contract maximum 300). */
   businessTokenTtlSeconds: number;
+  /** Store price vocabulary offered to the admin console; prices themselves are rows. */
+  storePricing: {
+    models: string[];
+    intervals: string[];
+    /** Currency used when a price is set without one (ISO 4217). */
+    defaultCurrency: string | null;
+  };
+}
+
+function list(env: Env, key: string): string[] {
+  const raw = read(env, key);
+  if (!raw) return [];
+  return [...new Set(raw.split(",").map((value) => value.trim()).filter(Boolean))];
 }
 
 export const BUSINESS_TOKEN_MAX_TTL_SECONDS = 300;
@@ -81,6 +94,11 @@ export function readNextgentConfig(env: Env = process.env): NextgentConfig {
     },
     platformCompanyId: read(env, "NEXTGENT_PLATFORM_COMPANY_ID"),
     businessTokenTtlSeconds: Math.min(ttl ?? BUSINESS_TOKEN_MAX_TTL_SECONDS, BUSINESS_TOKEN_MAX_TTL_SECONDS),
+    storePricing: {
+      models: list(env, "NEXTGENT_STORE_PRICE_MODELS"),
+      intervals: list(env, "NEXTGENT_STORE_PRICE_INTERVALS"),
+      defaultCurrency: read(env, "NEXTGENT_STORE_CURRENCY")?.toLowerCase() ?? null,
+    },
   };
 }
 
