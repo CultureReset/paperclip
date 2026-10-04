@@ -12,6 +12,7 @@ import {
   samePermissions,
 } from "../services/nextgent-store.js";
 import { parseStorePayload } from "../services/store-content.js";
+import { inviteAcceptUrl, sendInviteEmail } from "../services/nextgent-invite-email.js";
 
 const config: NextgentConfig = {
   gcrApiUrl: "https://gcr.example.test",
@@ -135,12 +136,40 @@ describe("store NEXT GENT section (plan §7)", () => {
     const section = nextgentSectionOf(release);
     expect(newPermissions(["availability:read"], section)).toEqual(["bookings:write"]);
     expect(newPermissions(["availability:read", "bookings:write", "menu:read"], section)).toEqual([]);
-    expect(samePermissions(["bookings:write", "availability:read"], section)).toBe(true);
-    expect(samePermissions(["availability:read"], section)).toBe(false);
+    expect(samePermissions(["bookings:write", "availability:read"], permissionsOf(section))).toBe(true);
+    expect(samePermissions(["availability:read"], permissionsOf(section))).toBe(false);
     expect(describePermissions(section)).toEqual([
-      { permission: "bookings:write", resource: "bookings", action: "write", reason: "Creates bookings", changesThings: true },
-      { permission: "availability:read", resource: "availability", action: "read", reason: "Checks what is open", changesThings: false },
+      { permission: "bookings:write", resource: "bookings", action: "write", reason: "Creates bookings", optional: false, changesThings: true },
+      { permission: "availability:read", resource: "availability", action: "read", reason: "Checks what is open", optional: false, changesThings: false },
     ]);
     expect(nextgentSectionOf({})).toBeNull();
+  });
+});
+
+describe("invite email", () => {
+  const db = {} as never;
+  const input = { companyId: "c1", to: "invitee@example.test", token: "tok en", businessName: "Biz", inviterUserId: null, role: "operator" };
+
+  it("builds the accept link from OWNER_APP_URL", () => {
+    expect(inviteAcceptUrl("https://owner.example.test/", "abc")).toBe("https://owner.example.test/#/invite/abc");
+  });
+
+  it("asks gcr-api-clean to send the team invite template", async () => {
+    const { calls, fetch } = recordingFetch({ body: { sent: true } });
+    const result = await sendInviteEmail(db, input, { config, fetch, ownerAppUrl: "https://owner.example.test" });
+    expect(result).toEqual({ emailSent: true });
+    expect(calls[0].url).toBe("https://gcr.example.test/api/nextgent/email");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      companyId: "c1",
+      to: "invitee@example.test",
+      template: "team-invite",
+      data: { business_name: "Biz", inviter: "Biz", role: "operator", accept_link: "https://owner.example.test/#/invite/tok%20en" },
+    });
+  });
+
+  it("reports, never throws, when the email cannot go out", async () => {
+    expect(await sendInviteEmail(db, input, { config, fetch: recordingFetch({ status: 502, body: { sent: false } }).fetch, ownerAppUrl: "https://o.example.test" })).toMatchObject({ emailSent: false });
+    expect(await sendInviteEmail(db, input, { config, fetch: vi.fn(), ownerAppUrl: null })).toMatchObject({ emailSent: false, emailError: expect.stringMatching(/OWNER_APP_URL/) });
+    expect(await sendInviteEmail(db, input, { config: { ...config, serviceSecret: null }, fetch: vi.fn(), ownerAppUrl: "https://o.example.test" })).toMatchObject({ emailSent: false });
   });
 });

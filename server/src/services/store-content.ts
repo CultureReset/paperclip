@@ -34,6 +34,8 @@ export const storeNextgentSectionSchema = z.object({
       z.object({
         permission: z.string().trim().regex(NEXTGENT_PERMISSION_PATTERN, "Permissions are resource:action, e.g. availability:read"),
         reason: z.string().trim().min(1).max(500),
+        /** Optional data access: the owner may decline it at install; it never blocks an update. */
+        optional: z.boolean().default(false),
       }),
     )
     .default([]),
@@ -50,6 +52,8 @@ export type StoreNextgentSection = z.infer<typeof storeNextgentSectionSchema>;
 export const storePayloadSchema = z
   .object({
     nextgent: storeNextgentSectionSchema.nullish(),
+    /** An app's manifest (App-build- engine), kept whole for the screens that draw it. */
+    app: z.record(z.string(), z.unknown()).nullish(),
     /** Menu entries this item turns on, beyond the ones its agents, routines and skills need. */
     menu: z.array(z.enum(MENU_KEYS)).default([]),
     skills: z

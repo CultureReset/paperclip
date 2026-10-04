@@ -30,6 +30,10 @@ import { companyModelGatewayEnv } from "../services/nextgent-model-gateway.js";
 import { nextgentInboundService } from "../services/nextgent-inbound.js";
 import { nextgentStoreBridge } from "../services/nextgent-store.js";
 import { storeService } from "../services/store.js";
+import express from "express";
+import request from "supertest";
+import { nextgentRoutes } from "../routes/nextgent.js";
+import { errorHandler } from "../middleware/index.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = support.supported ? describe : describe.skip;
@@ -263,7 +267,7 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       const consent = await store.consent(companyId, item.id);
       expect(consent).toMatchObject({ kind: "agent", allowed: true, charge: { priceCents: 1500, interval: "month" } });
       expect(consent.needsAccessTo).toEqual([
-        { permission: "availability:read", resource: "availability", action: "read", reason: "See what is open", changesThings: false },
+        { permission: "availability:read", resource: "availability", action: "read", reason: "See what is open", optional: false, changesThings: false },
       ]);
 
       const install = await store.install(companyId, item.id, "owner-INS1");
@@ -278,6 +282,7 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
         kind: "agent",
         version: "1.0.0",
         permissions: ["availability:read"],
+        optionalPermissions: [],
       });
 
       const [booker] = await db.select().from(agents).where(eq(agents.companyId, companyId));
@@ -294,6 +299,35 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       expect(await secretByName(companyId, NEXTGENT_SECRET_NAMES.installToken(install.id))).toBeNull();
       const [after] = await db.select().from(pluginConfig).where(eq(pluginConfig.pluginId, plugin.id));
       expect(after.configJson).toEqual({ apiBaseUrl: GCR });
+    });
+
+    it("hands an installed app's token only to members of its company", async () => {
+      const companyId = await seedCompany("TOK");
+      const otherCompany = await seedCompany("TOX");
+      const { fetch } = fakeUpstream({
+        "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
+        "POST /api/nextgent/installs": () => ({ body: { token: "install-scoped-token" } }),
+      });
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
+      const item = await publish(store, "booker", "pack", agentRelease);
+      const install = await store.install(companyId, item.id, null);
+      const app = (actor: Record<string, unknown>) => {
+        const server = express();
+        server.use(express.json());
+        server.use((req, _res, next) => { (req as unknown as { actor: unknown }).actor = actor; next(); });
+        server.use("/api", nextgentRoutes(db, { config: configWith() }));
+        server.use(errorHandler);
+        return server;
+      };
+      const owner = { type: "board", source: "session", userId: "owner-TOK", companyIds: [companyId], isInstanceAdmin: false };
+      const res = await request(app(owner)).post(`/api/companies/${companyId}/installs/${install.id}/token`);
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ token: "install-scoped-token", expiresAt: null });
+      const outsider = { type: "board", source: "session", userId: "owner-TOX", companyIds: [otherCompany], isInstanceAdmin: false };
+      expect((await request(app(outsider)).post(`/api/companies/${companyId}/installs/${install.id}/token`)).status).toBe(403);
+      expect((await request(app({ ...owner, userId: "owner-TOX" })).post(`/api/companies/${companyId}/installs/${randomUUID()}/token`)).status).toBe(403);
+      const missing = await request(app(owner)).post(`/api/companies/${companyId}/installs/${randomUUID()}/token`);
+      expect(missing.status).toBe(404);
     });
 
     it("installs nothing when the plan does not allow the item", async () => {
@@ -434,6 +468,90 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
 
       const history = await store.listDeployments();
       expect(history[0]).toMatchObject({ itemName: "Helper", version: "1.1.0", action: "force", applied: 1, skipped: 1, status: "completed" });
+    });
+
+    it("pushes new installs switched off, by business kind, and lets the owner turn them on", async () => {
+      const shopA = await seedCompany("KA1");
+      const shopB = await seedCompany("KA2");
+      const other = await seedCompany("KB1");
+      await db.insert(nextgentBusinessLinks).values([
+        { companyId: shopA, entitySlug: "ka1", businessKind: "kind-a" },
+        { companyId: shopB, entitySlug: "ka2", businessKind: "kind-a" },
+        { companyId: other, entitySlug: "kb1", businessKind: "kind-b" },
+      ]);
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      expect(await store.businessKinds()).toEqual([{ key: "kind-a", count: 2 }, { key: "kind-b", count: 1 }]);
+      const item = await store.create({ key: "helper", kind: "agent", name: "Helper" }, null);
+      const release = { ...plainRelease, nextgent: { kind: "agent", permissions: [{ permission: "menu:read", reason: "Read the menu" }] } };
+      await store.addVersion(item.id, { version: "1.0.0", payload: release }, null);
+      await store.publish(item.id);
+
+      const push = { version: "1.0.0", action: "apply" as const, audience: { mode: "kind" as const, values: ["kind-a"] }, installMissing: true, enabled: true };
+      // A release that needs data never starts switched on, even when asked.
+      expect(await store.previewDeploy(item.id, push)).toMatchObject({ targeted: 2, install: 2, installSwitchedOff: 2 });
+      expect(await store.deploy(item.id, push, "admin")).toMatchObject({ applied: 2 });
+      expect(await db.select().from(agents).where(eq(agents.companyId, shopA))).toHaveLength(0);
+      const [listed] = await store.listForCompany(shopA);
+      expect(listed).toMatchObject({ installed: true, enabled: false });
+      expect((await store.listItemInstalls(item.id))[0]).toMatchObject({ status: "switched_off" });
+      expect(await store.listForCompany(other).then((rows) => rows[0].installed)).toBe(false);
+
+      const on = await store.enable(shopA, item.id, "owner-KA1");
+      expect(on.enabled).toBe(true);
+      expect(on.approvedPermissions).toEqual(["menu:read"]);
+      const created = await db.select().from(agents).where(eq(agents.companyId, shopA));
+      expect(created).toHaveLength(1);
+    });
+
+    it("starts a pushed install switched on only when it needs no data", async () => {
+      const companyId = await seedCompany("ON1");
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      const item = await store.create({ key: "plain", kind: "agent", name: "Plain" }, null);
+      await store.addVersion(item.id, { version: "1.0.0", payload: plainRelease }, null);
+      await store.publish(item.id);
+      const result = await store.deploy(item.id, { version: "1.0.0", action: "apply", audience: { mode: "companies", companyIds: [companyId] }, installMissing: true, enabled: true }, null);
+      expect(result).toMatchObject({ install: 1, installSwitchedOff: 0 });
+      const [install] = await db.select().from(storeInstalls).where(eq(storeInstalls.companyId, companyId));
+      expect(install.enabled).toBe(true);
+      expect(await db.select().from(agents).where(eq(agents.companyId, companyId))).toHaveLength(1);
+    });
+
+    it("keeps an app's manifest and lets the owner decline optional access", async () => {
+      const companyId = await seedCompany("APP");
+      const { calls, fetch } = fakeUpstream({
+        "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
+        "POST /api/nextgent/installs": () => ({ body: { token: "app-token" } }),
+      });
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
+      const item = await store.create({ key: "menu-app", kind: "app", name: "Menu" }, null);
+      const manifest = { id: "menu-app", name: "Menu", version: "1.0.0", ui: { views: {} } };
+      const { version } = await store.addVersion(item.id, {
+        version: "1.0.0",
+        payload: {
+          app: manifest,
+          nextgent: {
+            kind: "app",
+            permissions: [
+              { permission: "menu:read", reason: "Show the menu" },
+              { permission: "reviews:read", reason: "Show reviews next to dishes", optional: true },
+            ],
+          },
+        },
+      }, null);
+      expect((version.payload as Record<string, unknown>).app).toEqual(manifest);
+      await store.publish(item.id);
+      const consent = await store.consent(companyId, item.id);
+      expect(consent.needsAccessTo.map((entry) => [entry.permission, entry.optional])).toEqual([["menu:read", false], ["reviews:read", true]]);
+      const install = await store.install(companyId, item.id, null, { declinedPermissions: ["reviews:read"] });
+      expect(install.approvedPermissions).toEqual(["menu:read"]);
+      expect(calls.find((call) => call.method === "POST")?.body).toMatchObject({ permissions: ["menu:read"], optionalPermissions: [] });
+
+      // A new optional permission never holds an update; a new required one does.
+      const next = await store.addVersion(item.id, {
+        version: "1.1.0",
+        payload: { app: manifest, nextgent: { kind: "app", permissions: [{ permission: "menu:read", reason: "Show the menu" }, { permission: "events:read", reason: "x", optional: true }] } },
+      }, null);
+      expect(next).toMatchObject({ appliedTo: 1, needsApprovalFor: [] });
     });
 
     it("never pushes new data access, even forced", async () => {

@@ -14,6 +14,8 @@ export const nextgentBusinessLinks = pgTable(
     companyId: uuid("company_id").primaryKey().references(() => companies.id, { onDelete: "cascade" }),
     entitySlug: text("entity_slug").notNull(),
     forwardingAddress: text("forwarding_address"),
+    /** The business's kind (gcr-api-clean entity type) when known, for store audiences. */
+    businessKind: text("business_kind"),
     businessTokenSecretId: uuid("business_token_secret_id").references(() => companySecrets.id, { onDelete: "set null" }),
     linkedByUserId: text("linked_by_user_id"),
     linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { companies, storeDeployments, storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
+import { companies, nextgentBusinessLinks, storeDeployments, storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
 import { badRequest, conflict, notFound, unprocessable } from "../errors.js";
 import { readNextgentConfig } from "./nextgent-config.js";
 import { pluginRegistryService } from "./plugin-registry.js";
@@ -9,9 +9,12 @@ import { parseStorePayload, storeContentService, storeNextgentSectionSchema } fr
 import {
   describePermissions,
   newPermissions,
+  permissionsOf,
   nextgentSectionOf,
   nextgentStoreBridge,
   samePermissions,
+  carriedGrant,
+  initialGrant,
   type NextgentStoreBridge,
 } from "./nextgent-store.js";
 import { MENU_CATALOG, menuFromPayload } from "./store-menu.js";
@@ -94,8 +97,12 @@ export interface StoreVersionInput {
 /** How a push moves installs. `force` also moves installs on manual updates. */
 export const STORE_DEPLOY_ACTIONS = ["apply", "force"] as const;
 export type StoreDeployAction = (typeof STORE_DEPLOY_ACTIONS)[number];
-/** Who a push reaches: every install, chosen companies, or the installs on given channels. */
-export const STORE_AUDIENCE_MODES = ["all", "companies", "channel"] as const;
+/**
+ * Who a push reaches: every company (or every install), chosen companies, the
+ * installs on given channels, or the companies whose linked business is of
+ * given kinds (kinds are data: the linked businesses' own kinds).
+ */
+export const STORE_AUDIENCE_MODES = ["all", "companies", "channel", "kind"] as const;
 export type StoreAudienceMode = (typeof STORE_AUDIENCE_MODES)[number];
 
 export interface StoreDeployInput {
@@ -103,6 +110,14 @@ export interface StoreDeployInput {
   action: StoreDeployAction;
   audience: { mode: StoreAudienceMode; companyIds?: string[]; values?: string[] };
   notes?: string | null;
+  /** Also install the release where it is not installed yet (replaces gcr-api-clean's automation rollout). */
+  installMissing?: boolean;
+  /**
+   * New installs from this push start switched on. Only for a release that
+   * needs no business data and costs nothing; otherwise they start switched
+   * off and the owner turns them on (which is their consent).
+   */
+  enabled?: boolean;
 }
 
 export interface StorePriceInput {
@@ -115,6 +130,8 @@ export interface StorePriceInput {
 export interface StoreSubscriptionInput {
   channel?: StoreChannel;
   approvalMode?: StoreApprovalMode;
+  /** Optional permissions the owner declines at install. */
+  declinedPermissions?: string[];
 }
 
 /**
@@ -131,7 +148,34 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
    * applies on its own: the install stays on its version, "needs approval".
    */
   function requiresApproval(install: StoreInstallRow, version: StoreVersionRow) {
+    // A switched-off install has granted nothing yet; the owner consents when turning it on.
+    if (!install.enabled) return false;
     return newPermissions(install.approvedPermissions, nextgentSectionOf(version.payload)).length > 0;
+  }
+
+  /**
+   * Make an install live in its company: the item's plugin on, the release's
+   * content created, and gcr-api-clean told (token, routine). Undone on failure.
+   */
+  async function bringUp(item: StoreItemRow, install: StoreInstallRow, version: StoreVersionRow, userId: string | null, declined: string[]) {
+    await applyToCompany(item, install.companyId, true);
+    try {
+      await content.sync(install.companyId, item, version.payload, userId, install.id);
+      return await bridge.activate({
+        item,
+        install,
+        version,
+        userId,
+        firstActivation: true,
+        permissions: initialGrant(nextgentSectionOf(version.payload), declined),
+      });
+    } catch (err) {
+      const current = await db.select().from(storeInstalls).where(eq(storeInstalls.id, install.id)).then((rows) => rows[0] ?? null);
+      if (current) await bridge.deactivate(current).then((finish) => finish()).catch(() => undefined);
+      await content.remove(install.companyId, item, userId).catch(() => undefined);
+      await applyToCompany(item, install.companyId, false).catch(() => undefined);
+      throw err;
+    }
   }
 
   async function getItem(itemId: string): Promise<StoreItemRow> {
@@ -166,14 +210,18 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
    * callers only get here with new permissions after the owner approved them.
    */
   async function moveInstall(item: StoreItemRow, install: StoreInstallRow, version: StoreVersionRow, userId: string | null) {
-    await content.sync(install.companyId, item, version.payload, userId, install.id);
+    // A switched-off install only records the release; it is created when turned on.
+    if (install.enabled) await content.sync(install.companyId, item, version.payload, userId, install.id);
     const [updated] = await db
       .update(storeInstalls)
       .set({ versionId: version.id, updatedAt: new Date() })
       .where(eq(storeInstalls.id, install.id))
       .returning();
-    if (!samePermissions(install.approvedPermissions, nextgentSectionOf(version.payload))) {
-      await bridge.activate({ item, install: updated, version, userId, firstActivation: false });
+    if (!install.enabled) return updated;
+    const section = nextgentSectionOf(version.payload);
+    const granted = carriedGrant(install.approvedPermissions, section);
+    if (section ? !samePermissions(install.approvedPermissions, granted) : install.approvedPermissions !== null) {
+      await bridge.activate({ item, install: updated, version, userId, firstActivation: false, permissions: granted });
     }
     return updated;
   }
@@ -181,9 +229,11 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
   interface DeployPlanEntry {
     companyId: string;
     install: StoreInstallRow | null;
-    outcome: "apply" | "skip";
+    outcome: "apply" | "install" | "skip";
     reason: string | null;
     needsConsent: boolean;
+    /** For outcome "install": whether the new install starts switched on. */
+    enabled?: boolean;
   }
 
   /** Decide, per company in the audience, whether a push moves its install and why not. */
@@ -196,22 +246,44 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       .then((rows) => rows[0] ?? null);
     if (!version) throw notFound(`${item.name} has no version ${input.version}`);
     const installs = await db.select().from(storeInstalls).where(eq(storeInstalls.itemId, itemId));
+    const installOf = (companyId: string) => installs.find((install) => install.companyId === companyId) ?? null;
     const mode = input.audience.mode;
-    let targets: Array<{ companyId: string; install: StoreInstallRow | null }>;
+    let companyIds: string[];
     if (mode === "companies") {
-      const ids = [...new Set(input.audience.companyIds ?? [])];
-      if (ids.length === 0) throw badRequest("Choose at least one company");
-      targets = ids.map((companyId) => ({ companyId, install: installs.find((install) => install.companyId === companyId) ?? null }));
+      companyIds = [...new Set(input.audience.companyIds ?? [])];
+      if (companyIds.length === 0) throw badRequest("Choose at least one company");
     } else if (mode === "channel") {
       const channels = new Set(input.audience.values ?? []);
       if (channels.size === 0) throw badRequest("Choose at least one channel");
-      targets = installs.filter((install) => channels.has(install.channel)).map((install) => ({ companyId: install.companyId, install }));
+      companyIds = installs.filter((install) => channels.has(install.channel)).map((install) => install.companyId);
+    } else if (mode === "kind") {
+      const kinds = [...new Set(input.audience.values ?? [])];
+      if (kinds.length === 0) throw badRequest("Choose at least one business kind");
+      const linked = await db
+        .select({ companyId: nextgentBusinessLinks.companyId })
+        .from(nextgentBusinessLinks)
+        .where(inArray(nextgentBusinessLinks.businessKind, kinds));
+      companyIds = linked.map((row) => row.companyId);
+    } else if (input.installMissing) {
+      const all = await db.select({ id: companies.id, status: companies.status }).from(companies);
+      companyIds = all.filter((company) => company.status !== "archived").map((company) => company.id);
     } else {
-      targets = installs.map((install) => ({ companyId: install.companyId, install }));
+      companyIds = installs.map((install) => install.companyId);
     }
-    const plan: DeployPlanEntry[] = targets.map(({ companyId, install }) => {
+    const existing = new Set((await db.select({ id: companies.id }).from(companies)).map((row) => row.id));
+    const section = nextgentSectionOf(version.payload);
+    const priced = (item.priceAmountCents ?? 0) > 0;
+    const plan: DeployPlanEntry[] = companyIds.map((companyId) => {
+      const install = installOf(companyId);
       const skip = (reason: string, needsConsent = false): DeployPlanEntry => ({ companyId, install, outcome: "skip", reason, needsConsent });
-      if (!install) return skip("not_installed");
+      if (!install) {
+        if (!input.installMissing) return skip("not_installed");
+        if (!existing.has(companyId)) return skip("no_such_company");
+        if (item.status !== "published") return skip("not_published");
+        // A pushed install is switched on only when it needs no consent: no data, no charge.
+        const startOn = input.enabled === true && permissionsOf(section).length === 0 && !priced;
+        return { companyId, install: null, outcome: "install", reason: null, needsConsent: false, enabled: startOn };
+      }
       if (install.versionId === version.id) return skip("already_on_version");
       // New data access is always offered to the owner, never pushed or forced.
       if (requiresApproval(install, version)) return skip("needs_consent", true);
@@ -230,10 +302,17 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
     return {
       targeted: plan.length,
       apply: plan.filter((entry) => entry.outcome === "apply").length,
+      install: plan.filter((entry) => entry.outcome === "install").length,
+      installSwitchedOff: plan.filter((entry) => entry.outcome === "install" && !entry.enabled).length,
       skip: plan.filter((entry) => entry.outcome === "skip").length,
       needsConsent: plan.filter((entry) => entry.needsConsent).length,
       reasons,
-      companies: plan.map((entry) => ({ companyId: entry.companyId, outcome: entry.outcome, reason: entry.reason })),
+      companies: plan.map((entry) => ({
+        companyId: entry.companyId,
+        outcome: entry.outcome,
+        reason: entry.reason,
+        ...(entry.outcome === "install" ? { enabled: entry.enabled === true } : {}),
+      })),
     };
   }
 
@@ -441,6 +520,8 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
           status: item.status,
           latestVersion: latest?.version ?? null,
           installed: install !== null,
+          /** False when an admin pushed it switched off; the owner turns it on. */
+          enabled: install ? install.enabled : null,
           installedVersion: current?.version ?? null,
           channel: install?.channel ?? null,
           approvalMode: install?.approvalMode ?? null,
@@ -465,35 +546,25 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       if (!version) throw conflict(`${item.name} has no release on the ${channel} channel`);
       // Plan check and price first: nothing is created for an item the business may not have.
       const charge = await bridge.assertEntitled(companyId, item.key);
-      await applyToCompany(item, companyId, true);
       const installId = randomUUID();
-      let install: StoreInstallRow | undefined;
+      const [install] = await db
+        .insert(storeInstalls)
+        .values({
+          id: installId,
+          companyId,
+          itemId,
+          versionId: version.id,
+          channel,
+          approvalMode: subscription.approvalMode ?? "automatic",
+          installedByUserId: userId,
+        })
+        .returning();
       let activation: { charged: boolean } | null = null;
       try {
-        await content.sync(companyId, item, version.payload, userId, installId);
-        [install] = await db
-          .insert(storeInstalls)
-          .values({
-            id: installId,
-            companyId,
-            itemId,
-            versionId: version.id,
-            channel,
-            approvalMode: subscription.approvalMode ?? "automatic",
-            installedByUserId: userId,
-          })
-          .returning();
-        // Installing is the owner's consent to the release's permissions.
-        activation = await bridge.activate({ item, install, version, userId, firstActivation: true });
+        // Installing is the owner's consent to the release's permissions (less any optional ones declined).
+        activation = await bringUp(item, install, version, userId, subscription.declinedPermissions ?? []);
       } catch (err) {
-        if (install) {
-          // Undo anything gcr-api-clean already issued, then the local rows.
-          const current = await getInstall(companyId, itemId).catch(() => null);
-          if (current) await bridge.deactivate(current).then((finish) => finish()).catch(() => undefined);
-          await db.delete(storeInstalls).where(eq(storeInstalls.id, installId)).catch(() => undefined);
-        }
-        await content.remove(companyId, item, userId).catch(() => undefined);
-        await applyToCompany(item, companyId, false).catch(() => undefined);
+        await db.delete(storeInstalls).where(eq(storeInstalls.id, installId)).catch(() => undefined);
         throw err;
       }
       const [installed] = await db.select().from(storeInstalls).where(eq(storeInstalls.id, installId));
@@ -529,6 +600,18 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
 
     // ----- Admin: push, installs, price -------------------------------------
 
+    /** The kinds of the businesses linked to companies, with how many, for the "kind" audience. */
+    async businessKinds() {
+      const rows = await db
+        .select({ kind: nextgentBusinessLinks.businessKind, companies: count() })
+        .from(nextgentBusinessLinks)
+        .where(isNotNull(nextgentBusinessLinks.businessKind))
+        .groupBy(nextgentBusinessLinks.businessKind);
+      return rows
+        .map((row) => ({ key: row.kind as string, count: Number(row.companies) }))
+        .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+    },
+
     /** Every company that has the item, with where it stands. */
     async listItemInstalls(itemId: string) {
       await getItem(itemId);
@@ -553,7 +636,8 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
           latestVersion: latest?.version ?? null,
           channel: install.channel,
           approvalMode: install.approvalMode,
-          status: needsApproval ? "needs_approval" : behind ? "update_available" : "current",
+          status: !install.enabled ? "switched_off" : needsApproval ? "needs_approval" : behind ? "update_available" : "current",
+          enabled: install.enabled,
           approvedPermissions: install.approvedPermissions ?? [],
           installedAt: install.createdAt,
           updatedAt: install.updatedAt,
@@ -572,10 +656,35 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       const { item, version, plan } = await planDeploy(itemId, input);
       const failedFor: string[] = [];
       for (const entry of plan) {
-        if (entry.outcome !== "apply" || !entry.install) continue;
         try {
-          await moveInstall(item, entry.install, version, userId);
+          if (entry.outcome === "apply" && entry.install) {
+            await moveInstall(item, entry.install, version, userId);
+          } else if (entry.outcome === "install") {
+            const [created] = await db
+              .insert(storeInstalls)
+              .values({
+                companyId: entry.companyId,
+                itemId,
+                versionId: version.id,
+                channel: version.channel,
+                approvalMode: "automatic",
+                installedByUserId: userId,
+                enabled: false,
+              })
+              .returning();
+            if (entry.enabled) {
+              await bridge.assertEntitled(entry.companyId, item.key);
+              await bringUp(item, created, version, userId, []);
+              await db.update(storeInstalls).set({ enabled: true, updatedAt: new Date() }).where(eq(storeInstalls.id, created.id));
+            }
+          }
         } catch {
+          if (entry.outcome === "install") {
+            await db
+              .delete(storeInstalls)
+              .where(and(eq(storeInstalls.companyId, entry.companyId), eq(storeInstalls.itemId, itemId)))
+              .catch(() => undefined);
+          }
           entry.outcome = "skip";
           entry.reason = "failed";
           failedFor.push(entry.companyId);
@@ -593,7 +702,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
           notes: input.notes ?? null,
           status: failedFor.length === 0 ? "completed" : summary.apply > 0 ? "partial" : "failed",
           targeted: summary.targeted,
-          applied: summary.apply,
+          applied: summary.apply + summary.install,
           skipped: summary.skip,
           needsConsent: summary.needsConsent,
           failed: failedFor.length,
@@ -601,7 +710,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
           createdByUserId: userId,
         })
         .returning();
-      return { deployment, ...summary, applied: summary.apply, skipped: summary.skip, failedFor };
+      return { deployment, ...summary, applied: summary.apply + summary.install, skipped: summary.skip, failedFor };
     },
 
     async listDeployments(limit = 200) {
@@ -644,6 +753,29 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         billing,
         ...(billing === null ? { warning: "gcr-api-clean is not configured; the price is not billed" } : {}),
       };
+    },
+
+    /**
+     * The owner turns on an install an admin pushed switched off. This is the
+     * owner's install: plan check, content, gcr-api-clean registration.
+     */
+    async enable(companyId: string, itemId: string, userId: string | null, options: { declinedPermissions?: string[] } = {}) {
+      const item = await getItem(itemId);
+      const install = await getInstall(companyId, itemId);
+      if (!install) throw notFound(`${item.name} is not installed`);
+      if (install.enabled) return { ...install, charge: null, charged: false };
+      const version = install.versionId
+        ? await db.select().from(storeItemVersions).where(eq(storeItemVersions.id, install.versionId)).then((rows) => rows[0] ?? null)
+        : await newestFor(itemId, install.channel);
+      if (!version) throw conflict(`${item.name} has no release to turn on`);
+      const charge = await bridge.assertEntitled(companyId, item.key);
+      const activation = await bringUp(item, install, version, userId, options.declinedPermissions ?? []);
+      const [enabled] = await db
+        .update(storeInstalls)
+        .set({ enabled: true, versionId: version.id, updatedAt: new Date() })
+        .where(eq(storeInstalls.id, install.id))
+        .returning();
+      return { ...enabled, charge, charged: activation?.charged ?? false };
     },
 
     async uninstall(companyId: string, itemId: string, userId: string | null = null) {
@@ -698,7 +830,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         ? await db
             .select({ itemId: storeInstalls.itemId })
             .from(storeInstalls)
-            .where(eq(storeInstalls.companyId, companyId))
+            .where(and(eq(storeInstalls.companyId, companyId), eq(storeInstalls.enabled, true)))
         : [];
       const installedIds = new Set(installed.map((row) => row.itemId));
       return {

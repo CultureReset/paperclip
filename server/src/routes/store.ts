@@ -75,6 +75,8 @@ const deploySchema = z.object({
     values: z.array(z.string().trim().min(1)).max(100).optional(),
   }),
   notes: z.string().trim().max(2_000).nullish(),
+  installMissing: z.boolean().optional(),
+  enabled: z.boolean().optional(),
 });
 
 const priceSchema = z.object({
@@ -97,6 +99,21 @@ const subscriptionSchema = z
     channel: z.enum(STORE_CHANNELS).optional(),
     approvalMode: z.enum(STORE_APPROVAL_MODES).optional(),
   })
+  .optional()
+  .transform((value) => value ?? {});
+
+/** Install: the subscription, plus optional permissions the owner declines. */
+const installSchema = z
+  .object({
+    channel: z.enum(STORE_CHANNELS).optional(),
+    approvalMode: z.enum(STORE_APPROVAL_MODES).optional(),
+    declinedPermissions: z.array(z.string().trim().min(1)).max(200).optional(),
+  })
+  .optional()
+  .transform((value) => value ?? {});
+
+const enableSchema = z
+  .object({ declinedPermissions: z.array(z.string().trim().min(1)).max(200).optional() })
   .optional()
   .transform((value) => value ?? {});
 
@@ -159,6 +176,7 @@ export function storeRoutes(db: Db) {
   router.get("/store/admin/meta", async (req, res) => {
     assertInstanceAdmin(req);
     const pricing = readNextgentConfig().storePricing;
+    const businessKinds = await store.businessKinds();
     res.json({
       kinds: [...STORE_ITEM_KINDS],
       channels: [...STORE_CHANNELS],
@@ -167,8 +185,16 @@ export function storeRoutes(db: Db) {
       forceableAdvisory: "security",
       actions: STORE_DEPLOY_ACTIONS.map((key) => ({ key, force: key === "force" })),
       audienceModes: STORE_AUDIENCE_MODES.map((key) =>
-        key === "companies" ? { key, needs: "companies" } : key === "channel" ? { key, options: [...STORE_CHANNELS] } : { key },
+        key === "companies"
+          ? { key, needs: "companies" }
+          : key === "channel"
+            ? { key, options: [...STORE_CHANNELS] }
+            : key === "kind"
+              ? { key, options: businessKinds }
+              : { key },
       ),
+      /** A push may also install where missing, switched on or (default) off. */
+      installOptions: { installMissing: true, enabled: true },
       priceModels: pricing.models,
       intervals: pricing.intervals,
       currency: pricing.defaultCurrency,
@@ -226,11 +252,20 @@ export function storeRoutes(db: Db) {
     res.json(await store.listForCompany(companyId));
   });
 
-  router.post("/companies/:companyId/store/:itemId/install", validate(subscriptionSchema), async (req, res) => {
+  router.post("/companies/:companyId/store/:itemId/install", validate(installSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertCanManageInstalls(req, access, companyId);
     await withStoreDetails(res, async () => {
       res.status(201).json(await store.install(companyId, req.params.itemId as string, req.actor.userId ?? null, req.body));
+    });
+  });
+
+  /** Turn on an install an admin pushed switched off (the owner's consent). */
+  router.post("/companies/:companyId/store/:itemId/enable", validate(enableSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    await assertCanManageInstalls(req, access, companyId);
+    await withStoreDetails(res, async () => {
+      res.json(await store.enable(companyId, req.params.itemId as string, req.actor.userId ?? null, req.body));
     });
   });
 

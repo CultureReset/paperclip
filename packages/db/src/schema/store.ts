@@ -101,6 +101,12 @@ export const storeInstalls = pgTable(
     approvedPermissions: jsonb("approved_permissions").$type<string[]>(),
     /** Company secret holding the token gcr-api-clean issued for this install. */
     tokenSecretId: uuid("token_secret_id"),
+    /**
+     * False for an install an admin pushed "switched off": it is listed in the
+     * company but nothing is created, registered or billed until the owner
+     * turns it on, which is also the owner's consent to its data access.
+     */
+    enabled: boolean("enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

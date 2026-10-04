@@ -88,7 +88,8 @@ export function storeMenuService(db: Db) {
       const installs = await db
         .select({ versionId: storeInstalls.versionId })
         .from(storeInstalls)
-        .where(eq(storeInstalls.companyId, companyId));
+        // An install pushed "switched off" turns nothing on until the owner enables it.
+        .where(and(eq(storeInstalls.companyId, companyId), eq(storeInstalls.enabled, true)));
       const versionIds = installs.map((install) => install.versionId).filter((id): id is string => Boolean(id));
       const versions = versionIds.length
         ? await db

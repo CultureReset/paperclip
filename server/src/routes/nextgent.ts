@@ -1,9 +1,11 @@
 import { Router, type Request, type RequestHandler, type Response } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
-import { companies } from "@paperclipai/db";
-import { forbidden, HttpError, notFound } from "../errors.js";
+import { companies, storeInstalls } from "@paperclipai/db";
+import { isUuidLike } from "@paperclipai/shared";
+import { secretService } from "../services/secrets.js";
+import { conflict, forbidden, HttpError, notFound } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { accessService } from "../services/access.js";
 import { normalizeHumanRole } from "../services/company-member-roles.js";
@@ -156,6 +158,30 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
     });
     res.set("Cache-Control", "no-store");
     res.json({ token, expiresAt });
+  });
+
+  /**
+   * An installed app's own business-data token, for the screen that draws it
+   * (it can only touch what the owner approved for that install). gcr-api-clean
+   * has no short-lived mint for install tokens yet, so this is the install's
+   * token itself (`expiresAt: null`), revoked when the app is uninstalled.
+   */
+  router.post("/companies/:companyId/installs/:installId/token", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    const installId = req.params.installId as string;
+    await businessRoleFor(req, db, companyId);
+    if (!isUuidLike(installId)) throw notFound("Install not found");
+    const install = await db
+      .select({ id: storeInstalls.id, enabled: storeInstalls.enabled, tokenSecretId: storeInstalls.tokenSecretId })
+      .from(storeInstalls)
+      .where(and(eq(storeInstalls.id, installId), eq(storeInstalls.companyId, companyId)))
+      .then((rows) => rows[0] ?? null);
+    if (!install) throw notFound("Install not found");
+    if (!install.enabled) throw conflict("This install is switched off");
+    if (!install.tokenSecretId) throw notFound("This install has no business-data token");
+    const token = await secretService(db).resolveSecretValue(companyId, install.tokenSecretId, "latest");
+    res.set("Cache-Control", "no-store");
+    res.json({ token, expiresAt: null });
   });
 
   /** Receipts for real-world actions in this company, newest first (any member). */

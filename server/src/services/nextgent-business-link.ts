@@ -82,6 +82,11 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
         throw new HttpError(502, "gcr-api-clean returned an incomplete link");
       }
       const forwardingAddress = typeof linked.forwardingAddress === "string" ? linked.forwardingAddress : null;
+      // The business's kind, for store audiences: from gcr-api-clean when it says,
+      // else the kind the owner gave a new business, else what was known before.
+      const upstreamKind = [linked.kind, linked.entityType].find((value): value is string => typeof value === "string" && value.trim() !== "");
+      const previous = await get(companyId);
+      const businessKind = upstreamKind?.trim() ?? input.create?.kind ?? previous?.businessKind ?? null;
       // One business, one company: never keep a token for a business another company holds.
       const holder = await db
         .select({ companyId: nextgentBusinessLinks.companyId })
@@ -102,10 +107,10 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
       try {
         await db
           .insert(nextgentBusinessLinks)
-          .values({ companyId, entitySlug: linked.entitySlug, forwardingAddress, businessTokenSecretId: secretId, linkedByUserId: userId })
+          .values({ companyId, entitySlug: linked.entitySlug, forwardingAddress, businessKind, businessTokenSecretId: secretId, linkedByUserId: userId })
           .onConflictDoUpdate({
             target: nextgentBusinessLinks.companyId,
-            set: { entitySlug: linked.entitySlug, forwardingAddress, businessTokenSecretId: secretId, linkedByUserId: userId, updatedAt: new Date() },
+            set: { entitySlug: linked.entitySlug, forwardingAddress, businessKind, businessTokenSecretId: secretId, linkedByUserId: userId, updatedAt: new Date() },
           });
       } catch (error) {
         if (isUniqueViolation(error)) throw conflict("That business is already linked to another account");

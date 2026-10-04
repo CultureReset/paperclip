@@ -27,6 +27,9 @@ export interface GcrLinkResponse {
   businessToken: string | null;
   businessTokenIssued?: boolean;
   created?: boolean;
+  /** The business's kind, if gcr-api-clean includes it (not in contract §4). */
+  kind?: string;
+  entityType?: string;
 }
 
 export interface GcrInstallRequest {
@@ -36,6 +39,8 @@ export interface GcrInstallRequest {
   kind: NextgentInstallKind;
   version: string;
   permissions: string[];
+  /** The optional ones among `permissions` (granted, could have been declined). Not in contract §4. */
+  optionalPermissions?: string[];
   routine?: { webhookUrl: string; webhookSecret: string };
 }
 
@@ -124,6 +129,9 @@ export function gcrClient(options: { config?: NextgentConfig; fetch?: FetchLike 
       ),
     uninstall: (installId: string) =>
       call<Record<string, unknown>>("DELETE", `/api/nextgent/installs/${encodeURIComponent(installId)}`),
+    /** A platform email from one of gcr-api-clean's templates (e.g. a team invite). */
+    sendEmail: (input: { companyId?: string; to: string; template: string; data: Record<string, unknown> }) =>
+      call<{ sent?: boolean }>("POST", "/api/nextgent/email", input),
     /** gcr-api-clean billing's price for an item, used by entitlement and install charges. */
     setItemPrice: (
       itemKey: string,

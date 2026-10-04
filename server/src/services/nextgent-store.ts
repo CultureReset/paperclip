@@ -38,27 +38,64 @@ export function nextgentSectionOf(payload: unknown): StoreNextgentSection | null
   return parsed.success ? parsed.data : null;
 }
 
+const sorted = (values: Iterable<string>) => [...new Set(values)].sort();
+
+/** Every permission a release declares, required and optional. */
 export function permissionsOf(section: StoreNextgentSection | null): string[] {
-  return [...new Set((section?.permissions ?? []).map((entry) => entry.permission))].sort();
+  return sorted((section?.permissions ?? []).map((entry) => entry.permission));
 }
 
-/** Permissions a release asks for that the owner has not approved yet. */
+export function requiredPermissionsOf(section: StoreNextgentSection | null): string[] {
+  return sorted((section?.permissions ?? []).filter((entry) => !entry.optional).map((entry) => entry.permission));
+}
+
+export function optionalPermissionsOf(section: StoreNextgentSection | null): string[] {
+  return sorted((section?.permissions ?? []).filter((entry) => entry.optional).map((entry) => entry.permission));
+}
+
+/**
+ * Required permissions a release asks for that the owner has not approved:
+ * these hold an update until the owner says yes. New optional ones never
+ * block; they are simply not granted until the owner grants them.
+ */
 export function newPermissions(approved: string[] | null | undefined, section: StoreNextgentSection | null): string[] {
   const have = new Set(approved ?? []);
-  return permissionsOf(section).filter((permission) => !have.has(permission));
+  return requiredPermissionsOf(section).filter((permission) => !have.has(permission));
 }
 
-export function samePermissions(approved: string[] | null | undefined, section: StoreNextgentSection | null) {
-  const a = [...new Set(approved ?? [])].sort();
-  const b = permissionsOf(section);
-  return a.length === b.length && a.every((value, index) => value === b[index]);
+/** What an install is granted at first install: everything required, plus the optional ones not declined. */
+export function initialGrant(section: StoreNextgentSection | null, declined: string[] = []): string[] {
+  const no = new Set(declined);
+  return sorted([...requiredPermissionsOf(section), ...optionalPermissionsOf(section).filter((permission) => !no.has(permission))]);
+}
+
+/**
+ * What an install is granted on a release: what it had that the release still
+ * declares, plus the release's required ones (only reached once they are approved).
+ */
+export function carriedGrant(approved: string[] | null | undefined, section: StoreNextgentSection | null): string[] {
+  const declared = new Set(permissionsOf(section));
+  return sorted([...(approved ?? []).filter((permission) => declared.has(permission)), ...requiredPermissionsOf(section)]);
+}
+
+export function samePermissions(a: string[] | null | undefined, b: string[]) {
+  const left = sorted(a ?? []);
+  const right = sorted(b);
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 /** What the install screen shows: "Needs access to", with a badge for anything that writes or acts. */
 export function describePermissions(section: StoreNextgentSection | null) {
   return (section?.permissions ?? []).map((entry) => {
     const [resource, action] = entry.permission.split(":");
-    return { permission: entry.permission, resource, action, reason: entry.reason, changesThings: CHANGING_ACTIONS.has(action) };
+    return {
+      permission: entry.permission,
+      resource,
+      action,
+      reason: entry.reason,
+      optional: entry.optional === true,
+      changesThings: CHANGING_ACTIONS.has(action),
+    };
   });
 }
 
@@ -230,9 +267,12 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
       version: VersionRow;
       userId: string | null;
       firstActivation: boolean;
+      /** The permissions granted to this install (see initialGrant / carriedGrant). */
+      permissions: string[];
     }) {
       const section = nextgentSectionOf(input.version.payload);
-      const permissions = permissionsOf(section);
+      const permissions = sorted(input.permissions);
+      const optionalGranted = optionalPermissionsOf(section).filter((permission) => permissions.includes(permission));
       await db
         .update(storeInstalls)
         .set({ approvedPermissions: section ? permissions : null, updatedAt: new Date() })
@@ -250,6 +290,8 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
         kind: section.kind,
         version: input.version.version,
         permissions,
+        // Which of those the owner could have declined; gcr-api-clean may ignore it.
+        optionalPermissions: optionalGranted,
         ...(routine ? { routine } : {}),
       });
       if (typeof result?.token === "string" && result.token && section.kind !== "automation") {
