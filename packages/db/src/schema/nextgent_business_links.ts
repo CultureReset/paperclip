@@ -3,19 +3,18 @@ import { companies } from "./companies.js";
 import { companySecrets } from "./company_secrets.js";
 
 /**
- * One Paperclip company is one business. This is Paperclip's copy of the link
- * gcr-api-clean holds in `company_links`: which business the company runs,
- * its forwarding address, and the company secret holding the business token
- * the agents' business-data tools use. Business data itself never lives here.
+ * One Paperclip company is one business. This row is the reference side of
+ * the link gcr-api-clean holds in `company_links`: which business the company
+ * runs (`entity_slug`, DECISIONS #40) and the company secret holding the
+ * business token the agents' business-data tools use. Facts about the
+ * business (its kind, its forwarding address, anything else) live in
+ * gcr-api-clean and are read from it, never copied here (DECISIONS #32, #33).
  */
 export const nextgentBusinessLinks = pgTable(
   "nextgent_business_links",
   {
     companyId: uuid("company_id").primaryKey().references(() => companies.id, { onDelete: "cascade" }),
     entitySlug: text("entity_slug").notNull(),
-    forwardingAddress: text("forwarding_address"),
-    /** The business's kind (gcr-api-clean entity type) when known, for store audiences. */
-    businessKind: text("business_kind"),
     businessTokenSecretId: uuid("business_token_secret_id").references(() => companySecrets.id, { onDelete: "set null" }),
     linkedByUserId: text("linked_by_user_id"),
     linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),

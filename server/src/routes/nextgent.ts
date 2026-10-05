@@ -209,7 +209,7 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
     const link = await links.get(companyId);
     res.json(
       link
-        ? { linked: true, entitySlug: link.entitySlug, forwardingAddress: link.forwardingAddress, linkedAt: link.linkedAt }
+        ? { linked: true, entitySlug: link.entitySlug, linkedAt: link.linkedAt }
         : { linked: false },
     );
   });

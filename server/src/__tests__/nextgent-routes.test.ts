@@ -221,6 +221,11 @@ describe("business link", () => {
     mockLinks.get.mockResolvedValue(null);
     const res = await request(await appAs(session("user-2"))).get("/api/companies/company-1/business-link");
     expect(res.body).toEqual({ linked: false });
+    // The link is a reference: slug and when. Business facts (the forwarding address) are read from gcr-api-clean.
+    const linkedAt = new Date("2026-10-04T12:00:00Z");
+    mockLinks.get.mockResolvedValue({ companyId: "company-1", entitySlug: "biz", linkedAt, businessTokenSecretId: "s1", forwardingAddress: "stale@in.example.test" } as never);
+    const linked = await request(await appAs(session("user-2"))).get("/api/companies/company-1/business-link");
+    expect(linked.body).toEqual({ linked: true, entitySlug: "biz", linkedAt: linkedAt.toISOString() });
   });
 });
 

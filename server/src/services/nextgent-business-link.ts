@@ -19,8 +19,10 @@ export type BusinessLinkInput =
  * After the owner picks, creates or claims a business in the app, Paperclip
  * asks gcr-api-clean to link it (signed), keeps the business token it gets
  * back as a company secret for the agents' business-data tools, and records
- * the slug and forwarding address on the company. The token never leaves the
- * server. Unlink tears the same things down.
+ * the slug on the company. The token never leaves the server. What
+ * gcr-api-clean says about the business (its forwarding address, its kind)
+ * is passed through to the caller and not kept. Unlink tears the same things
+ * down.
  */
 export function nextgentBusinessLinkService(db: Db, options: { config?: NextgentConfig; fetch?: FetchLike } = {}) {
   const config = options.config ?? readNextgentConfig();
@@ -94,12 +96,8 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
       if (typeof linked?.entitySlug !== "string" || !linked.entitySlug) {
         throw new HttpError(502, "gcr-api-clean returned an incomplete link");
       }
+      // Passed through to the caller for the screen that follows; business facts are gcr-api-clean's to keep.
       const forwardingAddress = typeof linked.forwardingAddress === "string" ? linked.forwardingAddress : null;
-      // The business's kind, for store audiences: from gcr-api-clean when it says,
-      // else the kind the owner gave a new business, else what was known before.
-      const upstreamKind = [linked.kind, linked.entityType].find((value): value is string => typeof value === "string" && value.trim() !== "");
-      const previous = await get(companyId);
-      const businessKind = upstreamKind?.trim() ?? input.create?.kind ?? previous?.businessKind ?? null;
       // Checked again on the slug gcr-api-clean answered with (a created or
       // normalised one): never keep a token for a business another company holds.
       await assertNotHeldByAnother(companyId, linked.entitySlug);
@@ -116,10 +114,10 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
       try {
         await db
           .insert(nextgentBusinessLinks)
-          .values({ companyId, entitySlug: linked.entitySlug, forwardingAddress, businessKind, businessTokenSecretId: secretId, linkedByUserId: userId })
+          .values({ companyId, entitySlug: linked.entitySlug, businessTokenSecretId: secretId, linkedByUserId: userId })
           .onConflictDoUpdate({
             target: nextgentBusinessLinks.companyId,
-            set: { entitySlug: linked.entitySlug, forwardingAddress, businessKind, businessTokenSecretId: secretId, linkedByUserId: userId, updatedAt: new Date() },
+            set: { entitySlug: linked.entitySlug, businessTokenSecretId: secretId, linkedByUserId: userId, updatedAt: new Date() },
           });
       } catch (error) {
         if (isUniqueViolation(error)) throw conflict("That business is already linked to another account");

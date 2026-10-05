@@ -139,7 +139,7 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
     const companyId = await seedCompany("LNK");
     const plugin = await installBusinessPlugin();
     const { calls, fetch } = fakeUpstream({
-      "POST /api/nextgent/link": () => ({ body: { entitySlug: "biz-one", forwardingAddress: "biz-one@in.example.test", businessToken: "gcr_mcp_secret" } }),
+      "POST /api/nextgent/link": () => ({ body: { entitySlug: "biz-one", forwardingAddress: "biz-one@in.example.test", kind: "restaurant", businessToken: "gcr_mcp_secret" } }),
       "POST /api/nextgent/unlink": () => ({ body: { exportUrl: "https://export.example.test/biz-one" } }),
     });
     const links = nextgentBusinessLinkService(db, { config: configWith(), fetch });
@@ -152,7 +152,12 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
     const secret = await secretByName(companyId, NEXTGENT_SECRET_NAMES.businessToken);
     expect(secret?.status).toBe("active");
     const [link] = await db.select().from(nextgentBusinessLinks).where(eq(nextgentBusinessLinks.companyId, companyId));
-    expect(link).toMatchObject({ entitySlug: "biz-one", forwardingAddress: "biz-one@in.example.test", businessTokenSecretId: secret?.id });
+    // The row is a reference (slug + token secret). The forwarding address and the
+    // kind gcr-api-clean answered with are passed through, never stored (DECISIONS #32, #33, #40).
+    expect(link).toMatchObject({ entitySlug: "biz-one", businessTokenSecretId: secret?.id });
+    expect(Object.keys(link)).not.toContain("forwardingAddress");
+    expect(Object.keys(link)).not.toContain("businessKind");
+    expect(JSON.stringify(link)).not.toMatch(/restaurant|in\.example\.test/);
     const [config] = await db.select().from(pluginConfig).where(eq(pluginConfig.pluginId, plugin.id));
     expect(config.configJson).toEqual({ apiBaseUrl: GCR, businessToken: { type: "secret_ref", secretId: secret?.id, version: "latest" } });
 

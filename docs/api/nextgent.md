@@ -62,13 +62,18 @@ picks, creates or claims a business. Body: exactly one of
 
 Paperclip calls gcr-api-clean `POST /api/nextgent/link` (signed, with the
 owner's email as `notify.email`), stores the returned business token as the
-company secret `NEXTGENT_BUSINESS_TOKEN`, records the slug and forwarding
-address, and writes the business-data plugin's config so the company's agents
-can use it. The token is never returned. Response `201`:
+company secret `NEXTGENT_BUSINESS_TOKEN`, records the slug, and writes the
+business-data plugin's config so the company's agents can use it. The token
+is never returned. Response `201`:
 
 ```json
 { "entitySlug": "the-business", "forwardingAddress": "…" }
 ```
+
+`forwardingAddress` is gcr-api-clean's answer passed through for the screen
+that follows; Paperclip does not keep it (nor the business's kind). Read the
+live value from gcr-api-clean (`GET /api/owner/intake/forwarding`, business
+token).
 
 gcr-api-clean's refusals are passed through with their fields, e.g.
 `409 { "error": "…", "claimRequired": true }` (claim the listing first) or
@@ -82,7 +87,7 @@ Response: `{ "unlinked": true, "entitySlug": "…", "exportUrl": "…" }`
 (`exportUrl` only when exported).
 
 `GET` (any member) answers `{ "linked": false }` or
-`{ "linked": true, "entitySlug", "forwardingAddress", "linkedAt" }`.
+`{ "linked": true, "entitySlug", "linkedAt" }`.
 
 ## Invites by email
 

@@ -28,7 +28,7 @@ export interface GcrLinkResponse {
   businessToken: string | null;
   businessTokenIssued?: boolean;
   created?: boolean;
-  /** The business's kind, if gcr-api-clean includes it (not in contract §4). */
+  /** The business's kind, if gcr-api-clean includes it (not in contract §4). Passed through, never stored (DECISIONS #32). */
   kind?: string;
   entityType?: string;
 }
