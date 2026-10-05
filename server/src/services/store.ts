@@ -426,10 +426,13 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       if (item.kind === "app") assertAppManifest(payload, item, input.version);
       if (item.kind === "automation") {
         const definition = automationOf(payload);
-        if (!definition) throw badRequest("Release content is not valid: payload.automation must be the automation definition (trigger, steps, config_schema)");
-        const problems = validateAutomationDefinition({ name: item.name, ...definition }, {});
-        if (problems.length) throw badRequest(`Release automation is not valid: ${problems.join(" ")}`, { problems });
-        if (!definition.steps.length) throw badRequest("Release automation is not valid: add at least one step.");
+        // A hand-off-only release (nextgent.handoff, no definition) is the older path gcr-api-clean still runs; it stays accepted until Phase D.
+        if (!definition && !declared?.handoff) throw badRequest("Release content is not valid: payload.automation must be the automation definition (trigger, steps, config_schema)");
+        if (definition) {
+          const problems = validateAutomationDefinition({ name: item.name, ...definition }, {});
+          if (problems.length) throw badRequest(`Release automation is not valid: ${problems.join(" ")}`, { problems });
+          if (!definition.steps.length) throw badRequest("Release automation is not valid: add at least one step.");
+        }
       }
       if (item.kind === "layout" && !payload.layout) {
         throw badRequest("Release content is not valid: payload.layout must be the layout object (id, version)");
