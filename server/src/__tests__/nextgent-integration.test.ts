@@ -598,12 +598,29 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       const shopB = await seedCompany("KA2");
       const other = await seedCompany("KB1");
       await db.insert(nextgentBusinessLinks).values([
-        { companyId: shopA, entitySlug: "ka1", businessKind: "kind-a" },
-        { companyId: shopB, entitySlug: "ka2", businessKind: "kind-a" },
-        { companyId: other, entitySlug: "kb1", businessKind: "kind-b" },
+        { companyId: shopA, entitySlug: "ka1" },
+        { companyId: shopB, entitySlug: "ka2" },
+        { companyId: other, entitySlug: "kb1" },
       ]);
-      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      // Business kinds are business state: they come from gcr-api-clean over the
+      // bridge (DECISIONS #32). Paperclip holds no copy, so without gcr-api-clean
+      // the kind audience is empty.
+      const offline = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      expect(await offline.businessKinds()).toEqual([]);
+      const { calls, fetch } = fakeUpstream({
+        "GET /api/nextgent/business-kinds": () => ({
+          body: [
+            { key: "kind-b", count: 1, companyIds: [other] },
+            { key: "kind-a", count: 2, companyIds: [shopA, shopB] },
+          ],
+        }),
+        "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
+        "POST /api/nextgent/installs": () => ({ body: { token: "agent-token" } }),
+        "PATCH /api/nextgent/installs/:id": () => ({ body: { updated: true } }),
+      });
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
       expect(await store.businessKinds()).toEqual([{ key: "kind-a", count: 2 }, { key: "kind-b", count: 1 }]);
+      expect(calls.filter((call) => call.url.endsWith("/api/nextgent/business-kinds"))).toHaveLength(1);
       const item = await store.create({ key: "helper", kind: "agent", name: "Helper" }, null);
       const release = { ...plainRelease, nextgent: { kind: "agent", permissions: [{ permission: "menu:read", reason: "Read the menu" }] } };
       await store.addVersion(item.id, { version: "1.0.0", payload: release }, null);
@@ -612,6 +629,7 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       const push = { version: "1.0.0", action: "apply" as const, audience: { mode: "kind" as const, values: ["kind-a"] }, installMissing: true, enabled: true };
       // A release that needs data never starts switched on, even when asked.
       expect(await store.previewDeploy(item.id, push)).toMatchObject({ targeted: 2, install: 2, installSwitchedOff: 2 });
+      expect(await offline.previewDeploy(item.id, push)).toMatchObject({ targeted: 0 });
       expect(await store.deploy(item.id, push, "admin")).toMatchObject({ applied: 2 });
       expect(await db.select().from(agents).where(eq(agents.companyId, shopA))).toHaveLength(0);
       const [listed] = await store.listForCompany(shopA);

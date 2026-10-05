@@ -313,8 +313,11 @@ Instance admins only.
   `apply` moves installs on automatic updates and on a channel the release is
   on; `force` also moves manual ones and other channels (security fixes,
   rollbacks). A release asking for new data access is never pushed or forced
-  (`needs_consent`). Audience `kind` takes business kinds (`values`), listed in
-  meta from the kinds of linked businesses. `installMissing: true` also
+  (`needs_consent`). Audience `kind` takes business kinds (`values`). The kinds,
+  and which companies have each, come from gcr-api-clean's signed
+  `GET /api/nextgent/business-kinds` (`[{ key, count, companyIds }]`); meta
+  lists `{ key, count }`. Paperclip keeps no copy: without gcr-api-clean the
+  list is empty and a `kind` push targets nobody. `installMissing: true` also
   installs where the item is missing (audience `all` then means every
   company); those installs start switched off (`enabled: false`, owner turns
   them on) unless `enabled: true` and the release needs no data and has no

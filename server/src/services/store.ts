@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { companies, nextgentBusinessLinks, storeDeployments, storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
+import { companies, storeDeployments, storeInstalls, storeItems, storeItemVersions } from "@paperclipai/db";
 import { badRequest, conflict, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { readNextgentConfig } from "./nextgent-config.js";
@@ -275,13 +275,11 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       if (channels.size === 0) throw badRequest("Choose at least one channel");
       companyIds = installs.filter((install) => channels.has(install.channel)).map((install) => install.companyId);
     } else if (mode === "kind") {
-      const kinds = [...new Set(input.audience.values ?? [])];
-      if (kinds.length === 0) throw badRequest("Choose at least one business kind");
-      const linked = await db
-        .select({ companyId: nextgentBusinessLinks.companyId })
-        .from(nextgentBusinessLinks)
-        .where(inArray(nextgentBusinessLinks.businessKind, kinds));
-      companyIds = linked.map((row) => row.companyId);
+      const kinds = new Set(input.audience.values ?? []);
+      if (kinds.size === 0) throw badRequest("Choose at least one business kind");
+      // Which companies have a business of those kinds is gcr-api-clean's to say (DECISIONS #32).
+      const linked = await bridge.businessKinds();
+      companyIds = [...new Set(linked.filter((kind) => kinds.has(kind.key)).flatMap((kind) => kind.companyIds))];
     } else if (input.installMissing) {
       const all = await db.select({ id: companies.id, status: companies.status }).from(companies);
       companyIds = all.filter((company) => company.status !== "archived").map((company) => company.id);
@@ -627,16 +625,9 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
 
     // ----- Admin: push, installs, price -------------------------------------
 
-    /** The kinds of the businesses linked to companies, with how many, for the "kind" audience. */
+    /** The kinds of the linked businesses, with how many, for the "kind" audience; from gcr-api-clean, empty without it. */
     async businessKinds() {
-      const rows = await db
-        .select({ kind: nextgentBusinessLinks.businessKind, companies: count() })
-        .from(nextgentBusinessLinks)
-        .where(isNotNull(nextgentBusinessLinks.businessKind))
-        .groupBy(nextgentBusinessLinks.businessKind);
-      return rows
-        .map((row) => ({ key: row.kind as string, count: Number(row.companies) }))
-        .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+      return (await bridge.businessKinds()).map((kind) => ({ key: kind.key, count: kind.count }));
     },
 
     /** Every company that has the item, with where it stands. */

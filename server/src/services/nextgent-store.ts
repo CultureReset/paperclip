@@ -6,7 +6,7 @@ import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
 import { NEXTGENT_SECRET_NAMES, readNextgentConfig, type NextgentConfig } from "./nextgent-config.js";
 import { nextgentBusinessPlugin } from "./nextgent-business-plugin.js";
-import { gcrClient, type FetchLike, type GcrEntitlement } from "./nextgent-gcr-client.js";
+import { gcrClient, type FetchLike, type GcrBusinessKind, type GcrEntitlement } from "./nextgent-gcr-client.js";
 import { nextgentSecrets } from "./nextgent-secrets.js";
 import { routineService } from "./routines.js";
 import {
@@ -277,6 +277,20 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
         return null;
       }
       return gcr.setItemPrice(itemKey, price);
+    },
+
+    /**
+     * The kinds of the linked businesses, from gcr-api-clean, most common
+     * first. Business kinds are business state (DECISIONS #32): without
+     * gcr-api-clean there are none, never a local copy.
+     */
+    async businessKinds(): Promise<GcrBusinessKind[]> {
+      if (!gcr.configured) {
+        warnSkipped("business kinds", {});
+        return [];
+      }
+      const kinds = await gcr.businessKinds();
+      return kinds.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
     },
 
     /** The consent screen: permissions with reasons, and the charge, without installing. */

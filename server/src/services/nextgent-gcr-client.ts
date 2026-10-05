@@ -59,6 +59,31 @@ export interface GcrInstallPatch {
   layout?: Record<string, unknown>;
 }
 
+/**
+ * One business kind among the linked businesses (`GET /api/nextgent/business-kinds`):
+ * gcr-api-clean joins `company_links` to `entity.entity_type`. Paperclip keeps no copy (DECISIONS #32).
+ */
+export interface GcrBusinessKind {
+  key: string;
+  count: number;
+  companyIds: string[];
+}
+
+/** Keep the well-formed entries of gcr-api-clean's answer; anything else is dropped rather than guessed at. */
+function businessKindsOf(answer: unknown): GcrBusinessKind[] {
+  if (!Array.isArray(answer)) return [];
+  const kinds: GcrBusinessKind[] = [];
+  for (const entry of answer) {
+    if (!entry || typeof entry !== "object") continue;
+    const { key, count, companyIds } = entry as Record<string, unknown>;
+    if (typeof key !== "string" || key.trim() === "") continue;
+    if (typeof count !== "number" || !Number.isInteger(count) || count < 0) continue;
+    if (!Array.isArray(companyIds) || !companyIds.every((id) => typeof id === "string")) continue;
+    kinds.push({ key, count, companyIds: companyIds as string[] });
+  }
+  return kinds;
+}
+
 export interface GcrEntitlement {
   allowed: boolean;
   reason?: string;
@@ -169,6 +194,8 @@ export function gcrClient(options: { config?: NextgentConfig; fetch?: FetchLike 
         "GET",
         `/api/nextgent/entitlement?${new URLSearchParams({ companyId, itemKey }).toString()}`,
       ),
+    /** The kinds of the linked businesses, with the companies of each, for the store's "kind" audience. */
+    businessKinds: async () => businessKindsOf(await call<unknown>("GET", "/api/nextgent/business-kinds")),
   };
 }
 

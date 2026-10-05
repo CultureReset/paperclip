@@ -85,6 +85,34 @@ describe("gcr-api-clean client (contract §4)", () => {
     expect(signed(2, "GET", "/api/nextgent/entitlement", "")).toEqual({ ok: false, reason: "mismatch" });
   });
 
+  it("reads business kinds from gcr-api-clean, signed, and keeps only well-formed entries", async () => {
+    const { calls, fetch } = recordingFetch({
+      body: [
+        { key: "restaurant", count: 2, companyIds: ["c1", "c2"] },
+        { key: "", count: 1, companyIds: ["c3"] },
+        { key: "marina", count: "1", companyIds: "c4" },
+        { key: "charter", count: 1, companyIds: ["c5"] },
+      ],
+    });
+    const client = gcrClient({ config, fetch });
+    expect(await client.businessKinds()).toEqual([
+      { key: "restaurant", count: 2, companyIds: ["c1", "c2"] },
+      { key: "charter", count: 1, companyIds: ["c5"] },
+    ]);
+    expect(calls.map((c) => `${c.init.method} ${c.url}`)).toEqual(["GET https://gcr.example.test/api/nextgent/business-kinds"]);
+    const headers = calls[0].init.headers as Record<string, string>;
+    expect(
+      verifyNextgentSignature({
+        secret: "s3cret",
+        request: { method: "GET", pathname: "/api/nextgent/business-kinds", query: "", rawBody: "" },
+        timestamp: headers["x-nextgent-timestamp"],
+        nonce: headers["x-nextgent-nonce"],
+        signature: headers["x-nextgent-signature"],
+      }),
+    ).toEqual({ ok: true });
+    await expect(gcrClient({ config: { ...config, gcrApiUrl: null }, fetch }).businessKinds()).rejects.toBeInstanceOf(GcrNotConfiguredError);
+  });
+
   it("patches an install's switch, version and manifest at the contract path, signed like the others", async () => {
     const { calls, fetch } = recordingFetch({ body: { updated: true, projected: true } });
     const client = gcrClient({ config, fetch });
