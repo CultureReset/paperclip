@@ -12,6 +12,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROUTES_DIR = path.resolve(__dirname, "../routes");
 
 const apiPrefixes: Record<string, string> = {
+  "automations.ts": "/api",
+  "notifications.ts": "/api",
+  "entitlement.ts": "/api",
+  "nextgent-events.ts": "",
   "pipelines.ts": "/api",
   "cases.ts": "/api",
   "smoke-lab.ts": "/api",
@@ -175,7 +179,7 @@ function loadActualRoutes() {
     if (explicitOpenApiCoverageExclusions.has(file)) continue;
     const prefix = apiPrefixes[file];
     const source = fs.readFileSync(path.join(ROUTES_DIR, file), "utf8");
-    if (!prefix) {
+    if (prefix === undefined) {
       if (ROUTER_METHOD_PATTERN.test(source)) {
         unknownRouteFiles.push(file);
       }

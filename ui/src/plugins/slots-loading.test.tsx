@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 it("does not wait for or load modules for unrelated slots", async () => {
   const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
-  client.setQueryData(queryKeys.plugins.uiContributions, [{ ...contribution,
+  client.setQueryData([...queryKeys.plugins.uiContributions, null], [{ ...contribution,
     slots: [{ type: "page", id: "other", displayName: "Other", exportName: "Page", routePath: "other" }],
   }]);
   await render();
@@ -45,7 +45,7 @@ it("settles when a module import started by another consumer fails", async () =>
   let reject!: (error: Error) => void;
   const fetch = vi.fn(() => new Promise<Response>((_resolve, rejectPromise) => { reject = rejectPromise; }));
   vi.stubGlobal("fetch", fetch); vi.spyOn(console, "error").mockImplementation(() => {});
-  client.setQueryData(queryKeys.plugins.uiContributions, [contribution]);
+  client.setQueryData([...queryKeys.plugins.uiContributions, null], [contribution]);
   const loading = ensurePluginContributionLoaded(contribution);
   await render();
   expect(container.textContent).toBe("Loading");

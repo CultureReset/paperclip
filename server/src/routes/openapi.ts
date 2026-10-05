@@ -1284,6 +1284,9 @@ const RUNTIME_TOOLS_OPERATIONS = new Set([
 ]);
 
 const PUBLIC_OPERATIONS = new Set([
+  "POST /api/nextgent/events",
+  "POST /api/automations/hook/{publicId}",
+  "POST /api/nextgent/devices/status",
   "GET /.well-known/jwks.json",
   "POST /api/nextgent/receipts",
   "POST /api/nextgent/conversations",
@@ -1318,6 +1321,21 @@ const BOARD_ONLY_PREFIXES = [
 ];
 
 const BOARD_ONLY_OPERATIONS = new Set([
+  "GET /api/companies/{companyId}/automations/meta",
+  "GET /api/companies/{companyId}/automations",
+  "GET /api/companies/{companyId}/automations/drafts",
+  "POST /api/companies/{companyId}/automations/drafts",
+  "POST /api/companies/{companyId}/automations/drafts/{routineId}/publish",
+  "PATCH /api/companies/{companyId}/automations/{routineId}",
+  "POST /api/companies/{companyId}/automations/{routineId}/run",
+  "GET /api/companies/{companyId}/automations/{routineId}/runs",
+  "POST /api/companies/{companyId}/automations/{routineId}/hook/rotate",
+  "GET /api/companies/{companyId}/notifications/settings",
+  "PUT /api/companies/{companyId}/notifications/settings",
+  "GET /api/companies/{companyId}/notifications/recent",
+  "GET /api/companies/{companyId}/entitlement",
+  "POST /api/companies/{companyId}/devices/pair",
+  "DELETE /api/companies/{companyId}/devices/{deviceId}",
   "POST /api/companies/{companyId}/store/{itemId}/install",
   "POST /api/companies/{companyId}/store/{itemId}/enable",
   "PATCH /api/companies/{companyId}/store/{itemId}",
@@ -1551,6 +1569,20 @@ const BOARD_ONLY_OPERATIONS = new Set([
 ]);
 
 const INSTANCE_ADMIN_OPERATIONS = new Set([
+  "GET /api/automations/admin/meta",
+  "GET /api/automations/admin/runs/recent",
+  "GET /api/entitlement/admin/meta",
+  "GET /api/entitlement/admin/plans",
+  "POST /api/entitlement/admin/plans",
+  "PATCH /api/entitlement/admin/plans/{planId}",
+  "POST /api/entitlement/admin/plans/{planId}/items",
+  "DELETE /api/entitlement/admin/plans/{planId}/items/{itemId}",
+  "GET /api/entitlement/admin/grants",
+  "POST /api/entitlement/admin/grants",
+  "POST /api/entitlement/admin/grants/{grantId}/revoke",
+  "GET /api/entitlement/admin/companies/{companyId}/plan",
+  "PUT /api/entitlement/admin/companies/{companyId}/plan",
+  "GET /api/admin/nextgent/devices",
   "GET /api/store/admin/items",
   "POST /api/store/admin/items",
   "PATCH /api/store/admin/items/{itemId}",
@@ -11509,3 +11541,38 @@ registerCurrentRoute({ method: "delete", path: "/api/companies/{companyId}/busin
 registerCurrentRoute({ method: "get", path: "/.well-known/jwks.json", tags: ["nextgent"], summary: "Business-token verification keys" });
 registerCurrentRoute({ method: "post", path: "/api/nextgent/receipts", tags: ["nextgent"], summary: "Record a receipt (signed by gcr-api-clean)" });
 registerCurrentRoute({ method: "post", path: "/api/nextgent/conversations", tags: ["nextgent"], summary: "Record a reference to a call or text conversation (signed by gcr-api-clean; no transcript, no customer number)" });
+
+// Existing NEXT GENT routes mounted by app.ts; keep coverage and auth metadata aligned.
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/automations/meta", tags: ["automations"], summary: "Read companies/{companyId}/automations/meta", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/automations", tags: ["automations"], summary: "Read companies/{companyId}/automations", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/automations/drafts", tags: ["automations"], summary: "Read companies/{companyId}/automations/drafts", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/automations/drafts", tags: ["automations"], summary: "Submit companies/{companyId}/automations/drafts", responses: { 200: r.ok(), 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/automations/drafts/{routineId}/publish", tags: ["automations"], summary: "Submit companies/{companyId}/automations/drafts/{routineId}/publish", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "patch", path: "/api/companies/{companyId}/automations/{routineId}", tags: ["automations"], summary: "Update companies/{companyId}/automations/{routineId}", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/automations/{routineId}/run", tags: ["automations"], summary: "Submit companies/{companyId}/automations/{routineId}/run", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/automations/{routineId}/runs", tags: ["automations"], summary: "Read companies/{companyId}/automations/{routineId}/runs", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/automations/{routineId}/hook/rotate", tags: ["automations"], summary: "Submit companies/{companyId}/automations/{routineId}/hook/rotate", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/automations/admin/meta", tags: ["automations"], summary: "Read automations/admin/meta", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/automations/admin/runs/recent", tags: ["automations"], summary: "Read automations/admin/runs/recent", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/notifications/settings", tags: ["notifications"], summary: "Read companies/{companyId}/notifications/settings", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "put", path: "/api/companies/{companyId}/notifications/settings", tags: ["notifications"], summary: "Set companies/{companyId}/notifications/settings", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/notifications/recent", tags: ["notifications"], summary: "Read companies/{companyId}/notifications/recent", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/entitlement/admin/meta", tags: ["entitlement"], summary: "Read entitlement/admin/meta", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/entitlement/admin/plans", tags: ["entitlement"], summary: "Read entitlement/admin/plans", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/entitlement/admin/plans", tags: ["entitlement"], summary: "Submit entitlement/admin/plans", responses: { 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "patch", path: "/api/entitlement/admin/plans/{planId}", tags: ["entitlement"], summary: "Update entitlement/admin/plans/{planId}", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/entitlement/admin/plans/{planId}/items", tags: ["entitlement"], summary: "Submit entitlement/admin/plans/{planId}/items", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "delete", path: "/api/entitlement/admin/plans/{planId}/items/{itemId}", tags: ["entitlement"], summary: "Remove entitlement/admin/plans/{planId}/items/{itemId}", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/entitlement/admin/grants", tags: ["entitlement"], summary: "Read entitlement/admin/grants", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/entitlement/admin/grants", tags: ["entitlement"], summary: "Submit entitlement/admin/grants", responses: { 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/entitlement/admin/grants/{grantId}/revoke", tags: ["entitlement"], summary: "Submit entitlement/admin/grants/{grantId}/revoke", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/entitlement/admin/companies/{companyId}/plan", tags: ["entitlement"], summary: "Read entitlement/admin/companies/{companyId}/plan", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "put", path: "/api/entitlement/admin/companies/{companyId}/plan", tags: ["entitlement"], summary: "Set entitlement/admin/companies/{companyId}/plan", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/entitlement", tags: ["entitlement"], summary: "Read companies/{companyId}/entitlement", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/nextgent/events", tags: ["nextgent"], summary: "Receive a business event signed by GCR; eventId is idempotent", responses: { 202: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/automations/hook/{publicId}", tags: ["nextgent"], summary: "Invoke the automation webhook using its publicId credential", responses: { 202: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/companies/{companyId}/devices", tags: ["nextgent"], summary: "Read companies/{companyId}/devices", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/devices/pair", tags: ["nextgent"], summary: "Submit companies/{companyId}/devices/pair", responses: { 201: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "delete", path: "/api/companies/{companyId}/devices/{deviceId}", tags: ["nextgent"], summary: "Remove companies/{companyId}/devices/{deviceId}", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "get", path: "/api/admin/nextgent/devices", tags: ["nextgent"], summary: "Read admin/nextgent/devices", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });
+registerCurrentRoute({ method: "post", path: "/api/nextgent/devices/status", tags: ["nextgent"], summary: "Receive device heartbeat state signed by GCR", responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound } });

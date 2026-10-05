@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import os from "node:os";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildRuntimeApiCandidateUrls,
   choosePrimaryRuntimeApiUrl,
@@ -6,6 +7,25 @@ import {
 } from "../runtime-api.js";
 
 describe("runtime API discovery", () => {
+  it("preserves configured candidates when interface discovery is unavailable", () => {
+    const interfaces = vi.spyOn(os, "networkInterfaces").mockImplementation(() => {
+      throw new Error("interface inventory unavailable");
+    });
+    try {
+      expect(collectReachableInterfaceHosts()).toEqual([]);
+      expect(buildRuntimeApiCandidateUrls({
+        authPublicBaseUrl: "https://paperclip.example.test",
+        allowedHostnames: ["runtime.example.test"],
+        bindHost: "0.0.0.0",
+        port: 3100,
+      })).toEqual([
+        "https://paperclip.example.test",
+        "https://runtime.example.test:3100",
+      ]);
+    } finally {
+      interfaces.mockRestore();
+    }
+  });
   it("prefers the explicit public base URL for the primary runtime URL", () => {
     expect(
       choosePrimaryRuntimeApiUrl({
