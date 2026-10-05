@@ -54,6 +54,8 @@ import { statusCardRoutes } from "./routes/status-cards.js";
 import { teamsCatalogRoutes } from "./routes/teams-catalog.js";
 import { storeRoutes } from "./routes/store.js";
 import { nextgentPublicRoutes, nextgentRoutes } from "./routes/nextgent.js";
+import { nextgentEventRoutes } from "./routes/nextgent-events.js";
+import { notificationRoutes } from "./routes/notifications.js";
 import { nextgentDeviceTokenGuard } from "./middleware/nextgent-device-token.js";
 import { nextgentBusinessPlugin } from "./services/nextgent-business-plugin.js";
 import { agentRoutes } from "./routes/agents.js";
@@ -604,6 +606,8 @@ export async function createApp(
   // NEXT GENT: public JWKS plus the two signed endpoints gcr-api-clean calls.
   // Authenticated by HMAC signature over the raw body, not by session.
   app.use(nextgentPublicRoutes(db));
+  // Signed business events from gcr-api-clean and the per-install automation hook (DECISIONS #87).
+  app.use(nextgentEventRoutes(db));
   app.use(chatWebhookRoutes(chatChannels));
   // The instance validates single-use registration state and its trusted
   // current origin. This exact GET is the only public setup return.
@@ -673,6 +677,7 @@ export async function createApp(
   api.use(teamsCatalogRoutes(db));
   api.use(storeRoutes(db));
   api.use(nextgentRoutes(db));
+  api.use(notificationRoutes(db));
   // The setup-token login session service. The router builds it and hands it
   // back through the callback below, so the shutdown hook can cancel every live
   // session (SR-4).

@@ -81,6 +81,7 @@ import { queueIssueAssignmentWakeup, type IssueAssignmentWakeupDeps } from "./is
 import { logActivity } from "./activity-log.js";
 import type { PluginWorkerManager } from "./plugin-worker-manager.js";
 import { runtimePublicOrigin } from "./cloud-runtime-identity.js";
+import { automationService } from "./automation/index.js";
 
 const OPEN_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked"];
 const LIVE_HEARTBEAT_RUN_STATUSES = ["queued", "running", "scheduled_retry"];
@@ -413,19 +414,21 @@ function assertScheduleCompatibleVariables(variables: RoutineVariable[]) {
   }
 }
 
-function statusRequiresDefaultAgent(status: string) {
-  return status === "active";
+// A "steps" routine (the automation step runner, DECISIONS #82) runs without
+// an assignee agent; only an "agent" routine needs one to be active.
+function statusRequiresDefaultAgent(status: string, mode: string | null | undefined = "agent") {
+  return status === "active" && mode !== "steps";
 }
 
-function normalizeDraftRoutineStatus(status: string, assigneeAgentId: string | null | undefined) {
-  if (statusRequiresDefaultAgent(status) && !assigneeAgentId) {
+function normalizeDraftRoutineStatus(status: string, assigneeAgentId: string | null | undefined, mode: string | null | undefined = "agent") {
+  if (statusRequiresDefaultAgent(status, mode) && !assigneeAgentId) {
     return "paused";
   }
   return status;
 }
 
-function assertRoutineCanEnable(status: string, assigneeAgentId: string | null | undefined) {
-  if (statusRequiresDefaultAgent(status) && !assigneeAgentId) {
+function assertRoutineCanEnable(status: string, assigneeAgentId: string | null | undefined, mode: string | null | undefined = "agent") {
+  if (statusRequiresDefaultAgent(status, mode) && !assigneeAgentId) {
     throw unprocessable("Default agent required");
   }
 }
@@ -572,6 +575,8 @@ function routineRevisionSnapshotRoutine(routine: RoutineRow): RoutineRevisionSna
     variables: routine.variables ?? [],
     env: routine.env ?? null,
     responsibleUserId: routine.responsibleUserId ?? null,
+    mode: (routine.mode ?? "agent") as RoutineRevisionSnapshotV1["routine"]["mode"],
+    definition: (routine.definition as RoutineRevisionSnapshotV1["routine"]["definition"]) ?? null,
   };
 }
 
@@ -587,6 +592,7 @@ function routineRevisionSnapshotTrigger(trigger: RoutineTriggerRow): RoutineRevi
     publicId: trigger.publicId,
     signingMode: trigger.signingMode as RoutineRevisionSnapshotV1["triggers"][number]["signingMode"],
     replayWindowSec: trigger.replayWindowSec,
+    eventName: trigger.eventName ?? null,
   };
 }
 
@@ -957,6 +963,8 @@ export function routineService(
         title: snapshot.routine.title,
         description: snapshot.routine.description,
         snapshot,
+        // A "steps" routine's definition is pinned per revision: a run resumes on the one it started on (DECISIONS #82).
+        definition: (routine.definition as Record<string, unknown> | null) ?? null,
         changeSummary: options.changeSummary ?? null,
         restoredFromRevisionId: options.restoredFromRevisionId ?? null,
         createdByAgentId: actor.agentId ?? null,
@@ -1727,6 +1735,18 @@ export function routineService(
     nextRunAtOverride?: Date | null;
     actor?: Actor;
   }) {
+    // A "steps" routine runs on the automation step runner (DECISIONS #82):
+    // no issue, no agent — unless the run names an agent, which is the agent
+    // step handing work over (services/automation/index.ts handOff).
+    if (input.routine.mode === "steps" && !input.assigneeAgentId) {
+      return automationService(db).dispatch({
+        routine: input.routine,
+        trigger: input.trigger,
+        source: input.source,
+        payload: input.payload ?? null,
+        idempotencyKey: input.idempotencyKey ?? null,
+      });
+    }
     const projectId = input.projectId ?? input.routine.projectId ?? null;
     const projectWorkspaceId = input.projectWorkspaceId ?? null;
     const assigneeAgentId = input.assigneeAgentId ?? input.routine.assigneeAgentId ?? null;
@@ -2208,12 +2228,15 @@ export function routineService(
             strictMode: process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true",
             fieldPath: "env",
           });
-      const variables = syncRoutineVariablesWithTemplate(
-        [input.title, input.description],
-        sanitizeRoutineVariableInputs(input.variables),
-      );
+      // A "steps" routine's variables are its automation's settings (config_schema), not template placeholders: kept as given.
+      const variables = (input.mode ?? "agent") === "steps"
+        ? sanitizeRoutineVariableInputs(input.variables)
+        : syncRoutineVariablesWithTemplate(
+          [input.title, input.description],
+          sanitizeRoutineVariableInputs(input.variables),
+        );
       assertRoutineVariableDefinitions(variables);
-      const status = normalizeDraftRoutineStatus(input.status, input.assigneeAgentId);
+      const status = normalizeDraftRoutineStatus(input.status, input.assigneeAgentId, input.mode ?? "agent");
       const responsibleUserId = await resolveRoutineResponsibleUserId(db, companyId, actor.userId, input.parentIssueId ?? null);
       if (!responsibleUserId) {
         throw unprocessable("Routine requires a responsible user");
@@ -2239,6 +2262,8 @@ export function routineService(
             activityGateScope: input.activityGateScope ?? "company",
             variables,
             env,
+            mode: input.mode ?? "agent",
+            definition: (input.definition as Record<string, unknown> | null | undefined) ?? null,
             responsibleUserId,
             createdByAgentId: actor.agentId ?? null,
             createdByUserId: actor.userId ?? null,
@@ -2280,15 +2305,17 @@ export function routineService(
             });
       const requestedStatus = patch.status ?? existing.status;
       if (patch.status === "active") {
-        assertRoutineCanEnable(patch.status, nextAssigneeAgentId);
+        assertRoutineCanEnable(patch.status, nextAssigneeAgentId, existing.mode);
       }
       const nextStatus = patch.assigneeAgentId === undefined
         ? requestedStatus
-        : normalizeDraftRoutineStatus(requestedStatus, nextAssigneeAgentId);
-      const nextVariables = syncRoutineVariablesWithTemplate(
-        [nextTitle, nextDescription],
-        patch.variables === undefined ? existing.variables : sanitizeRoutineVariableInputs(patch.variables),
-      );
+        : normalizeDraftRoutineStatus(requestedStatus, nextAssigneeAgentId, existing.mode);
+      const nextVariables = existing.mode === "steps"
+        ? (patch.variables === undefined ? existing.variables : sanitizeRoutineVariableInputs(patch.variables))
+        : syncRoutineVariablesWithTemplate(
+          [nextTitle, nextDescription],
+          patch.variables === undefined ? existing.variables : sanitizeRoutineVariableInputs(patch.variables),
+        );
       if (patch.projectId !== undefined) await assertProject(existing.companyId, nextProjectId);
       if (patch.folderId !== undefined) await assertRoutineFolder(existing.companyId, nextFolderId);
       if (patch.assigneeAgentId !== undefined || patch.status === "active") {
@@ -2355,6 +2382,7 @@ export function routineService(
           activityGateScope: patch.activityGateScope ?? locked.activityGateScope,
           variables: nextVariables,
           env: nextEnv,
+          definition: patch.definition === undefined ? locked.definition : ((patch.definition as Record<string, unknown> | null) ?? null),
           responsibleUserId: locked.responsibleUserId ?? responsibleUserId,
           updatedByAgentId: actor.agentId ?? null,
           updatedByUserId: actor.userId ?? null,
@@ -2420,6 +2448,7 @@ export function routineService(
             activityGateScope: candidate.activityGateScope,
             variables: candidate.variables,
             env: candidate.env,
+            definition: candidate.definition,
             responsibleUserId: candidate.responsibleUserId,
             updatedByAgentId: actor.agentId ?? null,
             updatedByUserId: actor.userId ?? null,
@@ -2495,6 +2524,7 @@ export function routineService(
             secretId,
             signingMode: input.kind === "webhook" ? input.signingMode : null,
             replayWindowSec: input.kind === "webhook" ? input.replayWindowSec : null,
+            eventName: input.kind === "event" ? input.eventName : null,
             lastRotatedAt: input.kind === "webhook" ? new Date() : null,
             createdByAgentId: actor.agentId ?? null,
             createdByUserId: actor.userId ?? null,
@@ -3199,6 +3229,14 @@ export function routineService(
           ),
         )
         .orderBy(asc(routineTriggers.nextRunAt), asc(routineTriggers.createdAt));
+
+      // Step-runner waits that are due carry on first (gcr tick order), each
+      // claimed before it runs; a wait's failure never stops the schedules.
+      await automationService(db).resumeDueWaits(now).then((waits) => {
+        if (waits.due > 0) logger.info({ ...waits }, "automation waits resumed");
+      }).catch((err) => {
+        logger.error({ err }, "automation waits resume failed");
+      });
 
       let triggered = 0;
       for (const row of due) {
