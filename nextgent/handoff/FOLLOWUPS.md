@@ -1,0 +1,49 @@
+# Follow-ups to close before calling anything ready
+- [ ] Play-user: invite sheet passes the invitee's email to Paperclip invite create once Paperclip accepts `email` (and shows "email sent / not sent").
+- [ ] Play-user: wire the 12 owner routes once gcr part 2 lands (check shapes match src/lib/business.js).
+- [ ] Play-user + gcr-unified: render installed apps with the App-build- engine package once it lands.
+- [ ] Plat-admin: store meta/deploy/price/installs/deployments + admin token go live once Paperclip lands; re-verify.
+- [ ] Stacking audit results (gcr part1, Play-user, Plat-admin) → fix; rerun audit on Paperclip, gcr part 2, App-build-.
+- [ ] Phase 3: gcr-unified (directory, public pages, link pages, concierge results), Boxes, nextgent-platform (+ghost.json repoint), ghost-image, nextgent-maps.
+- [ ] Final cross-repo review + launch checklist (keys, DB apply order, deploys, before-you-sell).
+- [ ] gcr part 2 loose ends: Telnyx number-order status follow-up; computer MCP key stored as Paperclip company secret at pairing (needs Paperclip endpoint); Phone Agent instructions fetched from Paperclip (not only at install); Google attributes need the field catalogue; pick ONE AI-usage billing path (LiteLLM pull OR signed /usage) — double billing risk; pre-approve existing forwarding senders before applying nextgent_intake.sql; DEFAULT_TIMEZONE must be set.
+- [ ] Play-user: adjust to gcr part 2 shapes (pairing start/poll, expiresAt, checkout {url,mode}, PATCH profile {profile, ignored}, local booking times, waiting_for_approval, no suggested_reply).
+- [ ] Brand setting names: gcr PLATFORM_NAME vs Play-user VITE_BRAND_NAME — document both in the launch checklist.
+## From the owner's sales/prototype bundle — REFERENCE ONLY (owner: examples to understand how it works; do NOT build from them without the owner's OK)
+- [ ] Plat-admin: App Maps (candidates, reference-device tests, signing, staged rollout 5 → 10% → 100%), Support cases, Billing overview (MRR, past due, referral revenue), platform search, alerts, create business, invite user, failed execution → map issue.
+- [ ] Play-user: owner-editable action policy (ALLOW/ASK/DENY per action type), notifications centre, two-factor + sessions, live execution timeline with human takeover, Files, quick "today's special".
+- [ ] Onboarding: verify by business email, "verify later" with publishing off, imported-data review step, plan step (prices from billing rows), Android pairing steps (USB debugging, app logins check, connection test, safe test action), team invite step, launch summary.
+- [ ] Public page: Ask-this-business chat (public MCP), reservations app with real inventory + manage/cancel, private-event enquiry → Messages, loyalty signup, review submission, song votes, FAQs/policies, share.
+- [ ] Link Hub editor: ordering, custom and business-data links, appearance, QR download/print sign, click analytics.
+- [ ] GCR: web concierge chat, saved places, itinerary + share with group, map, deals/last-minute openings pushed by businesses, shareable results page with expiry, text results.
+- [ ] Boxes: Files, voice settings, privacy; remote control (keyboard, pointer, clipboard, audio) and human takeover; offline behaviour.
+- [ ] App engine: `packages/engine/src/store-rules.js` is a COPY of gcr-api-clean lib/storeManifest.js → make one source (gcr-api-clean depends on the engine package's rules, or engine imports gcr's) — no two copies.
+- [ ] gcr-api-clean routes for the engine: GET/POST /api/app-data/:table, PATCH/DELETE /api/app-data/:table/:id (scoped by token install_id), GET /api/app-install, PUT /api/app-install/settings, GET /api/public/apps/:installId, POST /api/public/apps/:installId/:table (public append tables only).
+- [ ] Manifest v1 alignment: runtime type `engine`, `ui` section, permission ids resource:action (v1 uses dots) — update cybercheck-cloud contract/app-manifest.v1.json? (that repo is reference; decide where the contract lives: engine package) and storeManifest.js checks.
+- [ ] Paperclip: store kind `app`, keep payload.app, optional permissions, install-token endpoint (sent).
+- [ ] Play-user Apps "Open" → <EngineApp>; gcr-unified public blocks → engine renderHtml/EngineApp.
+- [ ] Store push audiences: by business kind + "install switched off" (sent to Paperclip); decide on pushing to unlinked listings (gcr /api/admin/automations/:id/deploy still supports it, nothing calls it).
+- [ ] Launch env: Play-user VITE_DEFAULT_CURRENCY must be set (else prices lose their symbol); better: currency from the business's data.
+- [ ] Launch DB order: gcr sql/ORDER.md steps 20 + 21 BEFORE deploy (claims 503 otherwise; consent fold), step 19 with deploy. Consent fold assumes created_at on booking_opt_ins/bookings — confirm on live DB (read-only) before running; set its country-code placeholder.
+- [ ] Launch env renames: CLAIM_* → VERIFY_*; TWILIO_VERIFY_SERVICE_SID retired; LINKS_BASE_URL needed for live-photo review texts.
+- [ ] Before deploy: check live automations/automation_versions for sms.send steps aimed at customers → switch to message.
+- [ ] Unmounted routers (rides, charter, boat-rental, photographer, messaging, whatsapp) must use textCustomer before being remounted.
+## From A9ENT / MySet (CONTRACT §14) — engine round 2 STOPPED by owner; items below need the owner's OK before building
+- [ ] Engine round 2: action apps + contextual action slots; render modes inline/button/page; new capability apps (Availability with source binding, Menu, Listings generic, Events with residencies, Song Request, Crowdsource a Song, Shoutout, Tips, Merch Store, Quote Request, Contact, Book/Book Appointment/Schedule/Request Booking, Social Links, Save Contact, Directions, Custom Link, Reviews, Loyalty, Private Events) — RUNNING.
+- [ ] gcr round 4 (after round 3): external refs + provenance; connector registry per canonical concept; business_app_instances projection + page composition; analytics events + pixels; payments service (Stripe Connect); vCard; NFC/QR targets.
+- [ ] Play-user round 4 (after both): public page builder (order/show/hide/render mode/header actions), installed apps as their own nav entries, source picker per app concept, analytics view, pixels settings, QR/NFC.
+- [ ] Store extras as apps/services later: AI content credits, done-for-you setup service, team/agency plan, artist money log.
+## From the owner's Modular App Kit + Full App Store prototype — REFERENCE ONLY; do NOT build without the owner's OK
+- [ ] Paperclip store round 2: store-item ratings/reviews by businesses, screenshots, categories as data (Bookings, Marketing, Customer Engagement, Operations, Entertainment, Public Website, Agents, Automations, Connectors), "recommended for <business kind>" from data, search across apps/agents/automations/connectors/skills, commercial model per item (included / one-time / recurring), install history, uninstall data policy, compatibility metadata, version history per item.
+- [ ] Play-user Store UI (round 4): listing tabs Overview / Screenshots / Data / Permissions / Compatibility / Versions; install flow Choose app → (choose business, for owners with several/parent-child) → connect data source → first-run configure → publish → manage; per-surface visibility toggles (business page / link page / directory profile); render mode picker incl. card and popup; Installed → Updates / Subscriptions / History; remove with data-policy note.
+- [ ] Engine: Profile, Testimonials, Guest Feedback, Inventory Alerts + kit data contracts (sent to engine round 2).
+- [ ] Paperclip: send `app: version.payload.app` on gcr install (server/src/services/nextgent-store.ts); install-token route → call gcr POST /api/nextgent/installs/:installId/session, return short-lived {token, expiresAt}.
+- [ ] Duplication to resolve: gcr lib/appInstances.js mirrors engine sourcesFor/PUBLIC_KINDS (server can't import ESM engine) → generate it from one source like store-rules, or move the rule into gcr and have the engine import the generated copy.
+- [ ] PENDING OWNER DECISION: automations in Paperclip (owner's split: control logic = platform state) vs gcr-api-clean (current). Don't change until answered.
+- Step 5: the engine→builder draft converter drops `events`/`actions`/owner view headings; a starter built from song-requests or enquiry-form and republished under an operator key would lose them. Carry them through before the builder is offered to operators for those apps.
+- Step 5: once gcr `lib/dataContracts.js` publishes column names, add `fieldMap`s to gallery/media.images, social-links/business.links, listings, faqs, leads where the app field keys differ.
+- Step 5: a draft converter that carries events must rewrite the `<id>.` prefix to the new id when the builder republishes under an operator key.
+- Step 5: add record_table/record_id to business_messages for app submissions; reply-through-app for channel 'app'.
+- Step 5: gallery photos can no longer be hidden from the app (entity_photos has no visibility column); hide = remove today. Owner-facing change to confirm, or add a column respected by every reader of entity_photos.
+- Step 5: none of the six shipped apps declares `actions`, so the agent face (DECISIONS #46) has no live consumer; which actions each app offers agents (e.g. availability.search, menu list) is product scope for Step 8.
+- Step 5: a business created from Paperclip's link starts `is_active:false` and is 404 on the public entity route until listed — confirm intended (claim/verify flow) or auto-list on link.
