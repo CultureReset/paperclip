@@ -17,6 +17,8 @@ import {
 import { envConfigSchema } from "./secret.js";
 import { isValidRoutineDateString } from "../routine-variables.js";
 import { objectWithoutDefaults } from "./partial.js";
+import { ROUTINE_MODES } from "../automation-catalogue.js";
+import { automationDefinitionSchema } from "./automation.js";
 
 const routineVariableValueSchema = z.union([z.string(), z.number().finite(), z.boolean()]);
 
@@ -78,6 +80,10 @@ export const createRoutineSchema = z.object({
   activityGateScope: z.enum(ROUTINE_ACTIVITY_GATE_SCOPES).optional(),
   variables: z.array(routineVariableSchema).optional().default([]),
   env: envConfigSchema.optional().nullable(),
+  /** "agent" (default): every run is an issue for the assignee; "steps": the deterministic step runner (DECISIONS #82). */
+  mode: z.enum(ROUTINE_MODES).optional().default("agent"),
+  /** The automation definition a "steps" routine runs (trigger, steps, config_schema). */
+  definition: automationDefinitionSchema.optional().nullable(),
 });
 
 export type CreateRoutine = z.infer<typeof createRoutineSchema>;
@@ -106,6 +112,8 @@ export const routineRevisionSnapshotRoutineV1Schema = z.object({
   variables: z.array(routineVariableSchema),
   env: envConfigSchema.nullable().default(null),
   responsibleUserId: z.string().nullable().default(null),
+  mode: z.enum(ROUTINE_MODES).optional(),
+  definition: automationDefinitionSchema.nullable().optional(),
 }).strict();
 
 export const routineRevisionSnapshotTriggerV1Schema = z.object({
@@ -119,6 +127,7 @@ export const routineRevisionSnapshotTriggerV1Schema = z.object({
   publicId: z.string().nullable(),
   signingMode: z.enum(ROUTINE_TRIGGER_SIGNING_MODES).nullable(),
   replayWindowSec: z.number().int().min(30).max(86_400).nullable(),
+  eventName: z.string().nullable().optional(),
 }).strict();
 
 export const routineRevisionSnapshotV1Schema = z.object({
@@ -151,6 +160,11 @@ export const createRoutineTriggerSchema = z.discriminatedUnion("kind", [
   baseTriggerSchema.extend({
     kind: z.literal("api"),
   }),
+  baseTriggerSchema.extend({
+    kind: z.literal("event"),
+    /** The business event listened for, dotted (DECISIONS #54/#55), e.g. booking.completed. */
+    eventName: z.string().trim().min(3).max(200),
+  }),
 ]);
 
 export type CreateRoutineTrigger = z.infer<typeof createRoutineTriggerSchema>;
@@ -164,6 +178,7 @@ export const updateRoutineTriggerSchema = z.object({
   timezone: z.string().trim().min(1).optional().nullable(),
   signingMode: z.enum(ROUTINE_TRIGGER_SIGNING_MODES).optional().nullable(),
   replayWindowSec: z.number().int().min(30).max(86_400).optional().nullable(),
+  eventName: z.string().trim().min(3).max(200).optional().nullable(),
 });
 
 export type UpdateRoutineTrigger = z.infer<typeof updateRoutineTriggerSchema>;

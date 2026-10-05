@@ -188,15 +188,27 @@ export const skillTestAgentKeyScopeSchema = z.object({
   issueId: z.string().guid(),
 }).strict();
 
+/**
+ * A NEXT GENT device token (DECISIONS #71): minted at pairing for one device
+ * row, read-only, and held to the company's device, store, approvals and
+ * activity lists by the device-token guard. Revoked when the device is unlinked.
+ */
+export const deviceAgentKeyScopeSchema = z.object({
+  kind: z.literal("device"),
+  deviceId: z.string().guid(),
+}).strict();
+
 export const agentApiKeyScopeSchema = z.union([
   standardAgentKeyScopeSchema,
   taskBridgeAgentKeyScopeSchema,
   skillTestAgentKeyScopeSchema,
+  deviceAgentKeyScopeSchema,
 ]);
 
 export type AgentApiKeyScope = z.infer<typeof agentApiKeyScopeSchema>;
 export type TaskBridgeAgentKeyScope = z.infer<typeof taskBridgeAgentKeyScopeSchema>;
 export type SkillTestAgentKeyScope = z.infer<typeof skillTestAgentKeyScopeSchema>;
+export type DeviceAgentKeyScope = z.infer<typeof deviceAgentKeyScopeSchema>;
 
 export function normalizeAgentApiKeyScope(value: unknown): AgentApiKeyScope {
   const parsed = agentApiKeyScopeSchema.safeParse(value);

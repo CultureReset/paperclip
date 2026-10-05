@@ -89,6 +89,10 @@ export interface Routine {
   originId?: string | null;
   variables: RoutineVariable[];
   env?: RoutineEnvConfig | null;
+  /** "agent" or "steps" (DECISIONS #82). Absent on older readers means "agent". */
+  mode?: string;
+  /** The automation definition a "steps" routine runs. */
+  definition?: Record<string, unknown> | null;
   latestRevisionId: string | null;
   latestRevisionNumber: number;
   createdByAgentId: string | null;
@@ -135,6 +139,8 @@ export interface RoutineRevisionSnapshotRoutineV1 {
   variables: RoutineVariable[];
   env: RoutineEnvConfig | null;
   responsibleUserId: string | null;
+  mode?: string;
+  definition?: Record<string, unknown> | null;
 }
 
 export interface RoutineRevisionSnapshotTriggerV1 {
@@ -148,6 +154,7 @@ export interface RoutineRevisionSnapshotTriggerV1 {
   publicId: string | null;
   signingMode: RoutineTriggerSigningMode | null;
   replayWindowSec: number | null;
+  eventName?: string | null;
 }
 
 export interface RoutineRevisionSnapshotV1 {
@@ -199,6 +206,8 @@ export interface RoutineTrigger {
   secretId: string | null;
   signingMode: string | null;
   replayWindowSec: number | null;
+  /** For kind "event": the business event listened for. */
+  eventName?: string | null;
   lastRotatedAt: Date | null;
   lastResult: string | null;
   createdByAgentId: string | null;
