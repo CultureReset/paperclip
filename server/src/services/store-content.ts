@@ -27,12 +27,34 @@ const resourceKey = z.string().trim().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$
  * comes from a separate install; leave it out for an agent in this release.
  */
 export const NEXTGENT_PERMISSION_PATTERN = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
+/**
+ * The business resources a permission may name (CONTRACT §6, gcr-api-clean
+ * lib/businessTables.js RESOURCES) plus `contacts` for people records
+ * (leads, customers; DECISIONS #59), and the actions on them.
+ */
+export const NEXTGENT_RESOURCES = ["business", "menu", "availability", "bookings", "events", "reviews", "transactions", "messages", "contacts"] as const;
+export const NEXTGENT_ACTIONS = ["read", "write", "send"] as const;
+const knownResources = new Set<string>(NEXTGENT_RESOURCES);
+const knownActions = new Set<string>(NEXTGENT_ACTIONS);
+const nextgentPermission = z
+  .string()
+  .trim()
+  .regex(NEXTGENT_PERMISSION_PATTERN, "Permissions are resource:action, e.g. availability:read")
+  .superRefine((value, ctx) => {
+    const [resource, action] = value.split(":");
+    if (!knownResources.has(resource)) {
+      ctx.addIssue({ code: "custom", message: `Unknown resource "${resource}"; one of ${NEXTGENT_RESOURCES.join(", ")}` });
+    }
+    if (!knownActions.has(action)) {
+      ctx.addIssue({ code: "custom", message: `Unknown action "${action}"; one of ${NEXTGENT_ACTIONS.join(", ")}` });
+    }
+  });
 export const storeNextgentSectionSchema = z.object({
   kind: z.enum(["agent", "app", "automation"]),
   permissions: z
     .array(
       z.object({
-        permission: z.string().trim().regex(NEXTGENT_PERMISSION_PATTERN, "Permissions are resource:action, e.g. availability:read"),
+        permission: nextgentPermission,
         reason: z.string().trim().min(1).max(500),
         /** Optional data access: the owner may decline it at install; it never blocks an update. */
         optional: z.boolean().default(false),

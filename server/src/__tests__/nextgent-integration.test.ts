@@ -743,6 +743,43 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       expect((await store.listForCompany(companyId))[0]).toMatchObject({ app: engineManifest("menu-app", "1.1.0"), versionId: next.version.id });
     });
 
+    it("passes an app release that asks for contacts (DECISIONS #59) and lists it under needsAccessTo", async () => {
+      const companyId = await seedCompany("CONTACTS");
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      const item = await store.create({ key: "enquiry-form", kind: "app", name: "Enquiry Form" }, null);
+      const manifest = engineManifest("enquiry-form", "1.0.0", {
+        bindings: { enquiries: { contract: "leads.items", access: "read-write" } },
+      });
+      await store.addVersion(item.id, {
+        version: "1.0.0",
+        payload: {
+          app: manifest,
+          nextgent: {
+            kind: "app",
+            permissions: [
+              { permission: "contacts:read", reason: "Shows past enquiries" },
+              { permission: "contacts:write", reason: "Saves a visitor's enquiry" },
+            ],
+          },
+        },
+      }, null);
+      await store.publish(item.id);
+      const [listed] = await store.listForCompany(companyId);
+      expect(listed).toMatchObject({ app: manifest, installId: null });
+      expect(listed.needsAccessTo).toEqual([
+        { permission: "contacts:read", resource: "contacts", action: "read", reason: "Shows past enquiries", optional: false, changesThings: false },
+        { permission: "contacts:write", resource: "contacts", action: "write", reason: "Saves a visitor's enquiry", optional: false, changesThings: true },
+      ]);
+      // A resource gcr-api-clean does not know is refused at the gate, naming it.
+      const other = await store.create({ key: "leads-app", kind: "app", name: "Leads" }, null);
+      await expect(
+        store.addVersion(other.id, {
+          version: "1.0.0",
+          payload: { app: engineManifest("leads-app", "1.0.0"), nextgent: { kind: "app", permissions: [{ permission: "leads:read", reason: "x" }] } },
+        }, null),
+      ).rejects.toMatchObject({ status: 400, message: expect.stringContaining('Unknown resource "leads"') });
+    });
+
     it("refuses an app release whose manifest fails the gate, naming the field", async () => {
       const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
       const item = await store.create({ key: "menu-app", kind: "app", name: "Menu" }, null);

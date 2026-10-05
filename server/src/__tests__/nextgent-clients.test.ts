@@ -11,7 +11,7 @@ import {
   permissionsOf,
   samePermissions,
 } from "../services/nextgent-store.js";
-import { parseStorePayload } from "../services/store-content.js";
+import { NEXTGENT_RESOURCES, parseStorePayload } from "../services/store-content.js";
 import { inviteAcceptUrl, sendInviteEmail } from "../services/nextgent-invite-email.js";
 
 const config: NextgentConfig = {
@@ -201,6 +201,27 @@ describe("store NEXT GENT section (plan §7)", () => {
     expect(parseStorePayload({ nextgent: { kind: "automation", handoff: { agentKey: "review", itemKey: "review-agent" } } }).nextgent?.handoff?.itemKey).toBe(
       "review-agent",
     );
+  });
+
+  it("knows the business resources, contacts among them (DECISIONS #59), and refuses one it does not", () => {
+    const contacts = parseStorePayload({
+      ...release,
+      nextgent: {
+        ...release.nextgent,
+        permissions: [
+          { permission: "contacts:read", reason: "Shows past enquiries" },
+          { permission: "contacts:write", reason: "Saves an enquiry" },
+        ],
+      },
+    });
+    expect(permissionsOf(nextgentSectionOf(contacts))).toEqual(["contacts:read", "contacts:write"]);
+    expect(describePermissions(nextgentSectionOf(contacts))).toEqual([
+      { permission: "contacts:read", resource: "contacts", action: "read", reason: "Shows past enquiries", optional: false, changesThings: false },
+      { permission: "contacts:write", resource: "contacts", action: "write", reason: "Saves an enquiry", optional: false, changesThings: true },
+    ]);
+    expect(NEXTGENT_RESOURCES).toContain("contacts");
+    expect(() => parseStorePayload({ ...release, nextgent: { ...release.nextgent, permissions: [{ permission: "leads:read", reason: "x" }] } })).toThrow(/leads/);
+    expect(() => parseStorePayload({ ...release, nextgent: { ...release.nextgent, permissions: [{ permission: "contacts:delete", reason: "x" }] } })).toThrow(/delete/);
   });
 
   it("flags new permissions and marks the ones that change things", () => {
