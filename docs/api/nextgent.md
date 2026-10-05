@@ -97,6 +97,79 @@ The link row (`nextgent_business_links`) is the reference only: `entity_slug`
 and the secret holding the business token. Facts about the business are read
 from gcr-api-clean when a screen or a push needs them.
 
+## Devices
+
+The device registry (SPEC §5): Paperclip knows which computers and Android
+phones belong to a company; the relay in gcr-api-clean reaches them;
+nextgent-platform operates them. Rows live in `nextgent_devices` (`kind`
+`computer` | `android`, `relay_node_id` = gcr-api-clean's `ghost_nodes.id`,
+`device_key`, `paired_computer_id`, `name`, `version`, `capabilities`,
+`sim_status`, `phone_number`, `last_seen_at`, `paired_by_user_id`, `paired_at`,
+`unlinked_at`). `online` is computed from `last_seen_at` with
+`NEXTGENT_DEVICE_ONLINE_SECONDS`; unset, it is `null` (unknown) and screens
+show `last_seen_at`.
+
+```
+GET    /api/companies/{companyId}/devices
+POST   /api/companies/{companyId}/devices/pair
+DELETE /api/companies/{companyId}/devices/{deviceId}
+```
+
+`GET` (any member, or the box with its device token): `{ "devices": [ … ],
+"onlineSeconds": 180 }`, linked devices only, each row with `online`.
+
+`POST …/pair` (owners, admins, instance admins) takes the code the box shows:
+`{ "code": "ABCD-1234", "name": "Shop box" }` (`name` optional; the code is
+matched upper-case). Paperclip mints a DEVICE TOKEN (an agent API key on the
+company's assistant with scope `{ "kind": "device", "deviceId" }`), then calls
+gcr-api-clean's signed `POST /api/nextgent/nodes/pair {companyId, code, name?,
+approvedBy: "paperclip:<userId>", deviceToken}`, which enrols the relay node
+(its `entity_slug` comes from `company_links`, never from a session) and hands
+the device token to the box through `/pair/poll`. The answer's `node` becomes
+the computer row and its `ghostMcpToken` is stored as the company secret
+`NEXTGENT_GHOST_MCP_TOKEN` for the assistant; neither token is returned.
+Response `201` is the device row. A refused code passes through with
+gcr-api-clean's fields; a company without an assistant agent is `409`; without
+`GCR_API_URL` and `NEXTGENT_SERVICE_SECRET` the route is `503`. Activity:
+`nextgent.device_paired`.
+
+The device token is read-only and held, before any route runs, to four reads in
+its own company: `GET …/devices`, `GET …/store`, `GET …/approvals`,
+`GET …/activity`. Everything else is `403`. It is revoked when the device is
+unlinked.
+
+`DELETE …/devices/{deviceId}` (same roles) asks gcr-api-clean's signed
+`POST /api/nextgent/nodes/{nodeId}/revoke {companyId}`, marks the computer and
+the phones derived from it `unlinked_at`, and revokes their device tokens.
+Response `{ "unlinked": true, "id" }`. Activity: `nextgent.device_unlinked`.
+Unlinking the business (`DELETE …/business-link`) does the same for every
+device of the company; gcr-api-clean revokes the nodes on its side.
+
+```
+POST /api/nextgent/devices/status
+```
+
+Signed, from gcr-api-clean's heartbeat on change plus a throttled last_seen:
+
+```json
+{ "companyId": "…", "nodeId": "…", "version": "1.3.0", "capabilities": ["sms.send"],
+  "phones": [{ "deviceId": "android.primary", "sim": "ready", "number": "+1…", "online": true }],
+  "lastSeenAt": "2026-10-04T12:00:00Z" }
+```
+
+Upserts the computer row (by `relay_node_id`) and one `android` row per phone
+(`device_key` = `deviceId`, `paired_computer_id` = the computer), with
+`sim_status`, `phone_number` and `last_seen_at` (a phone reported
+`online: false` keeps its last sighting). A node another company's push names
+is `409`. Response `{ "computer", "phones" }`.
+
+```
+GET /api/admin/nextgent/devices?companyId=&online=
+```
+
+Instance admins only: linked devices across companies with `companyName`;
+`companyId` narrows to one company, `online` (`true|false`, `1|0`) to one state.
+
 ## Invites by email
 
 `POST /api/companies/{companyId}/invites` accepts an optional `email`. The
@@ -133,14 +206,16 @@ POST /api/nextgent/receipts
 ```
 
 ```json
-{ "companyId": "…", "taskId": "…", "action": "…", "target": "…",
+{ "companyId": "…", "taskId": "…", "action": "…", "target": "…", "capability": "…",
   "oldValue": "…", "newValue": "…", "device": "…", "verified": true,
   "at": "…", "evidence": {} }
 ```
 
 Recorded in the company's Activity (`nextgent.receipt`). With `taskId` (an
 issue id or identifier in that company) it is also attached to the task as a
-system comment; an unknown task is `404`. Response `201 { "id", "taskId" }`.
+system comment; an unknown task is `404`. `target` may be empty or missing
+when the receipt names its `capability` or `action` (the relay's receipts do);
+what came is stored as it came. Response `201 { "id", "taskId" }`.
 
 ```
 POST /api/nextgent/conversations

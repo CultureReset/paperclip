@@ -5,7 +5,9 @@ NEXT GENT is this Paperclip fork: the platform half of a two-part system.
 **Paperclip owns platform state:** accounts, users, companies (workspaces),
 agents, workers, tasks, routines and automations, approvals, activity, costs,
 the store catalog and its versions, company installs, update channels and
-policies, permissions, and (eventually) which devices belong to a company.
+policies, permissions, and which devices belong to a company (the device
+registry: computers paired through Paperclip, the Android phones their
+heartbeats report, `online` from a configured window).
 Jarvis, Hermes, OpenClaw, OpenBot and Ghost/Android plug in underneath it as
 workers or executors.
 
@@ -21,7 +23,9 @@ None of it is recreated here.
 `company_id` to a gcr-api-clean `entity_slug` (the reference, nothing more);
 screens and agents reach business data with a Paperclip-issued business token
 that lives at most 300 s; service calls in either direction are HMAC-signed.
-`docs/api/nextgent.md` lists every endpoint. Do not build another control
+Devices: Paperclip approves a pairing and mints the box's read-only device
+token, gcr-api-clean's relay enrols and reaches the node and pushes its status
+back. `docs/api/nextgent.md` lists every endpoint. Do not build another control
 plane.
 
 ```
