@@ -1,0 +1,24 @@
+diff --git a/scripts/test-automations.js b/scripts/test-automations.js
+index d41eb03..8aaa3ef 100644
+--- a/scripts/test-automations.js
++++ b/scripts/test-automations.js
+@@ -195,6 +195,19 @@ function check(label, ok, detail) {
+     check('a required step field is caught', engine.validateDefinition({ ...DEFINITION, steps: [{ id: 'q', type: 'data.query', config: {} }] }).some((p) => /Table is required/.test(p)));
+     check('a bad key is caught', engine.validateDefinition({ ...DEFINITION, key: 'Not Valid' }).some((p) => /Key must/.test(p)));
+ 
++    console.log('\nValidation — agent steps may not template customer fields (DECISIONS #92)');
++    const agentDef = (config) => ({ ...DEFINITION, steps: [{ id: 'hand', name: 'Hand off', type: 'agent', config }] });
++    const piiProblems = engine.validateDefinition(agentDef({ instructions: 'Text {{ trigger.payload.customer_name }} at {{trigger.payload.booking.phone}}', payload: '{"who": "{{ trigger.payload.guest }}", "id": "{{ trigger.payload.id }}"}' }));
++    check('instructions naming trigger.payload customer fields are refused, in Paperclip\'s words',
++        piiProblems.includes('Step "Hand off": instructions may not use customer fields from the trigger (trigger.payload.customer_name, trigger.payload.booking.phone); use {{ trigger.ref.* }} and let the agent read the customer\'s record.'), JSON.stringify(piiProblems));
++    check('so is a payload naming one (and only the PII path is listed)',
++        piiProblems.includes('Step "Hand off": payload may not use customer fields from the trigger (trigger.payload.guest); use {{ trigger.ref.* }} and let the agent read the customer\'s record.'), JSON.stringify(piiProblems));
++    check('a payload given as an object is walked too', engine.validateDefinition(agentDef({ payload: { nested: ['{{ trigger.payload.Email }}'] } })).some((p) => /payload may not use customer fields \(trigger\.payload\.Email\)/.test(p)));
++    check('every PII word counts (address, details)', engine.validateDefinition(agentDef({ instructions: '{{ trigger.payload.address }} {{ trigger.payload.details.x }}' })).some((p) => /trigger\.payload\.address, trigger\.payload\.details\.x/.test(p)));
++    check('trigger.ref and non-PII payload paths are fine', engine.validateDefinition(agentDef({ instructions: 'Review booking {{ trigger.ref.booking_id }} ({{ trigger.payload.id }}, {{ trigger.payload.party_size }})', payload: { booking: '{{ trigger.ref }}' } })).length === 0);
++    check('the rule is the agent step\'s: other steps may still use payload fields', engine.validateDefinition({ ...DEFINITION, steps: [{ id: 'mail', type: 'email.send', config: { to: '{{ trigger.payload.customer_email }}', subject: 's', html: 'b' } }] }).length === 0,
++        JSON.stringify(engine.validateDefinition({ ...DEFINITION, steps: [{ id: 'mail', type: 'email.send', config: { to: '{{ trigger.payload.customer_email }}', subject: 's', html: 'b' } }] })));
++
+     console.log('\nEvents an installed app declares (DECISIONS #47)');
+     const appEvents = await engine.appEventsFor('flora-bama');
+     check('the events of the business\'s installed apps, exactly as declared (<manifest id>.<event>)', appEvents.map((e) => e.name).join(',') === 'song-requests.requests.submitted,song-requests.requests.played', JSON.stringify(appEvents));
