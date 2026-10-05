@@ -9,12 +9,17 @@ import { logActivity } from "./activity-log.js";
 import { issueService } from "./issues.js";
 import { readNextgentConfig, type NextgentConfig } from "./nextgent-config.js";
 
-/** Contract §5 bodies, exactly. */
+/**
+ * Contract §5 bodies. `target` may be empty or missing (DECISIONS #79): the
+ * relay's receipts name the capability or action instead, and what came is
+ * stored as it came.
+ */
 export const nextgentReceiptSchema = z.object({
   companyId: z.string().trim().min(1),
   taskId: z.string().trim().min(1).nullish(),
   action: z.string().trim().min(1).max(500),
-  target: z.string().trim().min(1).max(2_000),
+  target: z.string().trim().max(2_000).nullish(),
+  capability: z.string().trim().max(500).nullish(),
   oldValue: z.unknown().optional(),
   newValue: z.unknown().optional(),
   device: z.string().trim().max(500).nullish(),
@@ -133,6 +138,7 @@ export function nextgentInboundService(db: Db, options: { config?: NextgentConfi
           task: task ? { id: task.id, identifier: task.identifier, title: task.title } : null,
           action: d.action ?? null,
           target: d.target ?? null,
+          capability: d.capability ?? null,
           oldValue: d.oldValue ?? null,
           newValue: d.newValue ?? null,
           device: d.device ?? null,
@@ -152,7 +158,8 @@ export function nextgentInboundService(db: Db, options: { config?: NextgentConfi
       const id = randomUUID();
       const details = {
         action: receipt.action,
-        target: receipt.target,
+        target: receipt.target ?? null,
+        capability: receipt.capability ?? null,
         oldValue: receipt.oldValue ?? null,
         newValue: receipt.newValue ?? null,
         device: receipt.device ?? null,
@@ -173,7 +180,7 @@ export function nextgentInboundService(db: Db, options: { config?: NextgentConfi
       });
       if (task) {
         const body = [
-          `**${receipt.verified ? "Verified" : "Not verified"}:** ${receipt.action} — ${receipt.target}`,
+          `**${receipt.verified ? "Verified" : "Not verified"}:** ${receipt.action}${receipt.target ? ` — ${receipt.target}` : ""}`,
           "",
           `- Before: ${display(receipt.oldValue)}`,
           `- After: ${display(receipt.newValue)}`,
