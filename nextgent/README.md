@@ -1,15 +1,38 @@
 # NEXT GENT
 
-NEXT GENT is this Paperclip fork. Paperclip is the product: the dashboard every
-customer logs into, the company and work records, the agents. Everything else
-(Jarvis, Hermes, OpenClaw, OpenBot, Ghost/Android) plugs in underneath it as a
-worker or an executor. Nothing else holds business state.
+NEXT GENT is this Paperclip fork: the platform half of a two-part system.
+
+**Paperclip owns platform state:** accounts, users, companies (workspaces),
+agents, workers, tasks, routines and automations, approvals, activity, costs,
+the store catalog and its versions, company installs, update channels and
+policies, permissions, and (eventually) which devices belong to a company.
+Jarvis, Hermes, OpenClaw, OpenBot and Ghost/Android plug in underneath it as
+workers or executors.
+
+**gcr-api-clean and the `cyber check` Supabase database own business state:**
+the business and its parent or children, identity, hours, locations,
+contacts, services, menus, prices, availability, bookings, events, photos,
+reviews, staff, policies, FAQs, payments detected, integrations, the public
+and business MCP, the GCR directory and concierge data, and installed apps'
+own records. gcr-api-clean is the only server-side gateway to that database.
+None of it is recreated here.
+
+**The bridge connects them:** `nextgent_business_links` maps a Paperclip
+`company_id` to a gcr-api-clean `entity_slug` (the reference, nothing more);
+screens and agents reach business data with a Paperclip-issued business token
+that lives at most 300 s; service calls in either direction are HMAC-signed.
+`docs/api/nextgent.md` lists every endpoint. Do not build another control
+plane.
 
 ```
 customer ──► https://app.<your-domain> ──► NEXT GENT server (this repo, Docker)
                                              │  dashboard + API + agent runner
                                              ▼
-                                     Supabase "Saas" (Postgres only)
+                                     Supabase "Saas" (Postgres only): platform state
+                                             │
+                                             │  business token (≤ 300 s), signed service calls
+                                             ▼
+                                     gcr-api-clean ──► Supabase "cyber check": business state
 ```
 
 ## Accounts
@@ -26,9 +49,11 @@ Supabase project **Saas**, ref `mtjxlyncokedaduvzgmp`, us-east-2, organization
 every table itself on start (`PAPERCLIP_MIGRATION_AUTO_APPLY=true`), so there
 is nothing to run in the Supabase SQL editor.
 
-The other projects in that organization (`cyber check`, `gulf coast radar`,
-`launch gcr`, ...) belong to the old CyberCheck/GCR product. NEXT GENT does not
-use them, nor `gcr-api-clean`, `Dashboards-users-` or `Admin-dashboard-main`.
+The `cyber check` project in that organization is the business database. Only
+`gcr-api-clean` connects to it; this server reaches business data through
+gcr-api-clean over the bridge above and never holds a key to it. The other
+projects (`gulf coast radar`, `launch gcr`, ...) and the old dashboards
+(`Dashboards-users-`, `Admin-dashboard-main`) are not used.
 
 ## Run it
 

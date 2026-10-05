@@ -3,9 +3,13 @@ title: NEXT GENT wiring
 summary: Business tokens, the business link, signed calls with gcr-api-clean, and store installs
 ---
 
-These endpoints connect Paperclip (accounts, agents, work, store) with
-gcr-api-clean (business data). One Paperclip company is one business. Every
-setting is an environment variable listed in `.env.example`.
+These endpoints are the bridge between Paperclip, which owns platform state
+(accounts, companies, agents, work, routines, approvals, activity, costs,
+store, installs, permissions), and gcr-api-clean, which with the `cyber check`
+database owns business state. One Paperclip company is one business. The
+bridge is three things: the link (`company_id` ↔ `entity_slug`), business
+tokens that live at most 300 s, and HMAC-signed service calls in either
+direction. Every setting is an environment variable listed in `.env.example`.
 
 ## Business token for screens
 
@@ -88,6 +92,10 @@ Response: `{ "unlinked": true, "entitySlug": "…", "exportUrl": "…" }`
 
 `GET` (any member) answers `{ "linked": false }` or
 `{ "linked": true, "entitySlug", "linkedAt" }`.
+
+The link row (`nextgent_business_links`) is the reference only: `entity_slug`
+and the secret holding the business token. Facts about the business are read
+from gcr-api-clean when a screen or a push needs them.
 
 ## Invites by email
 
@@ -308,7 +316,9 @@ Instance admins only.
   constraint), `channels`, `advisoryTypes`, `approvalModes`,
   `forceableAdvisory`, `actions` (`apply`, `force` with `force: true`),
   `audienceModes` (`all`; `companies` with `needs: "companies"`; `channel`
-  with its `options`), and `priceModels`, `intervals`, `currency` from
+  with its `options`; `kind` with `options` `[{ key, count }]` from
+  gcr-api-clean, empty when it is not configured), and `priceModels`,
+  `intervals`, `currency` from
   `NEXTGENT_STORE_PRICE_MODELS`, `NEXTGENT_STORE_PRICE_INTERVALS`,
   `NEXTGENT_STORE_CURRENCY`.
 - `POST /api/store/admin/items/{itemId}/deploy/preview` and `…/deploy` —

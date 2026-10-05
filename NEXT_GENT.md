@@ -1,7 +1,11 @@
 # NEXT GENT
 
-This repository is the launchable NEXT GENT product. Paperclip remains the
-upstream engine and protocol; NEXT GENT is the customer-facing distribution.
+This repository is the platform side of NEXT GENT. Paperclip owns platform
+state (accounts, companies, agents, tasks, routines, approvals, activity,
+costs, the store, installs, permissions). gcr-api-clean and the `cyber check`
+database own business state (the business, its data, bookings, reviews, menus
+and the rest); the bridge in `nextgent/README.md` and `docs/api/nextgent.md`
+connects the two. Do not build another control plane.
 
 ## Product flow
 
