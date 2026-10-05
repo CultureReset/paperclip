@@ -2047,6 +2047,13 @@
       "breakpoints": true
     },
     {
+      "idx": 294,
+      "version": "7",
+      "when": 1791168481601,
+      "tag": "0294_nextgent_devices",
+      "breakpoints": true
+    },
+    {
       "idx": 295,
       "version": "7",
       "when": 1791168619812,

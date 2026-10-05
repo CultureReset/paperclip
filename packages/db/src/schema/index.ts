@@ -215,3 +215,4 @@ export { nextgentBusinessLinks } from "./nextgent_business_links.js";
 export { routineRunSteps, routineWaits } from "./automation_runs.js";
 export { storePlans, storePlanItems, storeGrants, companyPlans } from "./store_entitlement.js";
 export { notificationSettings, notificationLog } from "./notifications.js";
+export { nextgentDevices } from "./nextgent_devices.js";

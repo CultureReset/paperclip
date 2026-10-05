@@ -6,7 +6,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { and, eq, ne, sql } from "drizzle-orm";
 import {
   activityLog,
+  agentApiKeys,
   agents,
+  authUsers,
   companies,
   companyMemberships,
   companySecrets,
@@ -14,6 +16,7 @@ import {
   issueComments,
   issues,
   nextgentBusinessLinks,
+  nextgentDevices,
   pluginConfig,
   plugins,
   routines,
@@ -33,8 +36,15 @@ import { nextgentStoreBridge } from "../services/nextgent-store.js";
 import { storeService } from "../services/store.js";
 import express from "express";
 import request from "supertest";
-import { nextgentRoutes } from "../routes/nextgent.js";
+import { nextgentPublicRoutes, nextgentRoutes } from "../routes/nextgent.js";
+import { storeRoutes } from "../routes/store.js";
+import { approvalRoutes } from "../routes/approvals.js";
+import { activityRoutes } from "../routes/activity.js";
 import { errorHandler } from "../middleware/index.js";
+import { actorMiddleware } from "../middleware/auth.js";
+import { nextgentDeviceTokenGuard } from "../middleware/nextgent-device-token.js";
+import { nextgentDeviceService } from "../services/nextgent-devices.js";
+import { signNextgentRequest } from "../services/nextgent-service-signing.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = support.supported ? describe : describe.skip;
@@ -56,6 +66,7 @@ function configWith(overrides: Partial<NextgentConfig> = {}): NextgentConfig {
     businessTokenTtlSeconds: 300,
     acceptLegacySignatures: false,
     storePricing: { models: [], intervals: [], defaultCurrency: null },
+    devices: { onlineSeconds: 180 },
     ...overrides,
   };
 }
@@ -74,7 +85,9 @@ function fakeUpstream(answers: Record<string, (body: Record<string, unknown> | n
     const method = init.method ?? "GET";
     const body = init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
     calls.push({ method, url, body });
-    const key = `${method} ${parsed.pathname.replace(/\/api\/nextgent\/installs\/[^/]+(\/session)?$/, "/api/nextgent/installs/:id$1")}`;
+    const key = `${method} ${parsed.pathname
+      .replace(/\/api\/nextgent\/installs\/[^/]+(\/session)?$/, "/api/nextgent/installs/:id$1")
+      .replace(/\/api\/nextgent\/nodes\/[^/]+\/revoke$/, "/api/nextgent/nodes/:id/revoke")}`;
     const answer = answers[key];
     if (!answer) return new Response(JSON.stringify({ error: `unexpected ${key}` }), { status: 500 });
     const result = answer(body);
@@ -1049,6 +1062,198 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
     await expect(
       nextgentInboundService(db, { config: configWith() }).recordConversation({ companyId: "nextgent", ...conversation }),
     ).rejects.toMatchObject({ status: 422 });
+  });
+
+  describe("devices (SPEC §5, DECISIONS #69–#74, #78)", () => {
+    const nodeAnswers = (seen: string) => ({
+      "POST /api/nextgent/nodes/pair": (body: Record<string, unknown> | null) => ({
+        status: 201,
+        body: { node: { id: "node-1", name: body?.name ?? "Box", version: "1.2.0", health: {}, last_seen_at: seen }, ghostMcpToken: "gcr_mcp_ghost.secret" },
+      }),
+      "POST /api/nextgent/nodes/:id/revoke": () => ({ body: { revoked: true } }),
+      "POST /api/nextgent/unlink": () => ({ body: {} }),
+    });
+
+    /** The real server path: bearer tokens through the actor middleware, then the device-token guard, then the routes a box reads. */
+    function serverApp(fetch: ReturnType<typeof fakeUpstream>["fetch"]) {
+      const app = express();
+      app.use(express.json({ verify: (req, _res, buf) => { (req as unknown as { rawBody: Buffer }).rawBody = buf; } }));
+      app.use(actorMiddleware(db, { deploymentMode: "authenticated" }));
+      app.use(nextgentDeviceTokenGuard());
+      app.use(nextgentPublicRoutes(db, { config: configWith(), fetch }));
+      app.use("/api", nextgentRoutes(db, { config: configWith(), fetch }));
+      app.use("/api", storeRoutes(db));
+      app.use("/api", approvalRoutes(db));
+      app.use("/api", activityRoutes(db));
+      app.use(errorHandler);
+      return app;
+    }
+
+    function asActor(actor: Record<string, unknown>, fetch: ReturnType<typeof fakeUpstream>["fetch"]) {
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => { (req as unknown as { actor: unknown }).actor = actor; next(); });
+      app.use("/api", nextgentRoutes(db, { config: configWith(), fetch }));
+      app.use(errorHandler);
+      return app;
+    }
+
+    const signedPost = (app: express.Express, path: string, payload: unknown) => {
+      const body = JSON.stringify(payload);
+      return request(app).post(path).set(signNextgentRequest("shared", { method: "POST", pathname: path, query: "", rawBody: body })).set("content-type", "application/json").send(body);
+    };
+
+    it("pairs through gcr-api-clean with a minted device token, records the computer, keeps the Ghost MCP token and holds the token to its reads", async () => {
+      const companyId = await seedCompany("DEV");
+      const otherCompany = await seedCompany("DEX");
+      // The device token acts on behalf of the member who paired, so that member must be a real user.
+      await db.insert(authUsers).values({ id: "owner-DEV", name: "Owner", email: "owner-dev@example.test", createdAt: new Date(), updatedAt: new Date() });
+      await nextgentCompanySetup(db, { config: configWith() }).ensureAssistant(companyId);
+      const seen = new Date().toISOString();
+      const { calls, fetch } = fakeUpstream(nodeAnswers(seen));
+      const owner = { type: "board", source: "session", userId: "owner-DEV", companyIds: [companyId], isInstanceAdmin: false };
+
+      const paired = await request(asActor(owner, fetch)).post(`/api/companies/${companyId}/devices/pair`).send({ code: "abcd-1234", name: "Shop box" });
+      expect(paired.status).toBe(201);
+      expect(paired.body).toMatchObject({ companyId, kind: "computer", relayNodeId: "node-1", deviceKey: "node-1", name: "Shop box", version: "1.2.0", online: true, pairedByUserId: "owner-DEV" });
+      // gcr-api-clean got the company, the code upper-cased, who approved, and the device token for the box.
+      expect(calls[0]).toMatchObject({ method: "POST", url: `${GCR}/api/nextgent/nodes/pair` });
+      expect(calls[0].body).toMatchObject({ companyId, code: "ABCD-1234", name: "Shop box", approvedBy: "paperclip:owner-DEV" });
+      const deviceToken = calls[0].body?.deviceToken as string;
+      expect(deviceToken).toMatch(/\S{20,}/);
+      expect(JSON.stringify(paired.body)).not.toContain(deviceToken);
+      expect(JSON.stringify(paired.body)).not.toContain("gcr_mcp_ghost");
+      const rows = await db.select().from(nextgentDevices).where(eq(nextgentDevices.companyId, companyId));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: paired.body.id, kind: "computer", unlinkedAt: null });
+      expect(await secretByName(companyId, NEXTGENT_SECRET_NAMES.ghostMcpToken)).toMatchObject({ status: "active" });
+      const activity = await db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "nextgent.device_paired")));
+      expect(activity).toHaveLength(1);
+      expect(activity[0]).toMatchObject({ actorType: "user", actorId: "owner-DEV", entityType: "nextgent_device", entityId: paired.body.id });
+
+      // The box signs in with the device token: its company's four lists, nothing else, nowhere else.
+      const server = serverApp(fetch);
+      const asBox = (path: string) => request(server).get(path).set("authorization", `Bearer ${deviceToken}`);
+      const devicesRes = await asBox(`/api/companies/${companyId}/devices`);
+      expect(devicesRes.status).toBe(200);
+      expect(devicesRes.body.devices).toHaveLength(1);
+      expect(devicesRes.body.onlineSeconds).toBe(180);
+      expect((await asBox(`/api/companies/${companyId}/store`)).status).toBe(200);
+      expect((await asBox(`/api/companies/${companyId}/approvals`)).status).toBe(200);
+      expect((await asBox(`/api/companies/${companyId}/activity`)).status).toBe(200);
+      expect((await asBox(`/api/companies/${otherCompany}/devices`)).status).toBe(403);
+      expect((await asBox(`/api/companies/${otherCompany}/store`)).status).toBe(403);
+      expect((await asBox(`/api/companies/${companyId}/business-link`)).status).toBe(403);
+      expect((await request(server).post(`/api/companies/${companyId}/devices/pair`).set("authorization", `Bearer ${deviceToken}`).send({ code: "X" })).status).toBe(403);
+      expect((await request(server).delete(`/api/companies/${companyId}/devices/${paired.body.id}`).set("authorization", `Bearer ${deviceToken}`)).status).toBe(403);
+      expect((await request(server).post(`/api/companies/${companyId}/approvals`).set("authorization", `Bearer ${deviceToken}`).send({})).status).toBe(403);
+      expect(calls).toHaveLength(1);
+
+      // The heartbeat's status: the computer's state and one Android row per phone, pointing at the computer.
+      const later = new Date(Date.now() + 1000).toISOString();
+      const status = await signedPost(server, "/api/nextgent/devices/status", {
+        companyId, nodeId: "node-1", version: "1.3.0", capabilities: ["sms.send", "gbp.attributes"],
+        phones: [{ deviceId: "android.primary", sim: "ready", number: "+15550100", online: true }], lastSeenAt: later,
+      });
+      expect(status.status).toBe(200);
+      expect(status.body.computer).toMatchObject({ id: paired.body.id, version: "1.3.0", capabilities: ["sms.send", "gbp.attributes"], online: true });
+      expect(status.body.phones).toHaveLength(1);
+      expect(status.body.phones[0]).toMatchObject({ kind: "android", deviceKey: "android.primary", pairedComputerId: paired.body.id, simStatus: "ready", phoneNumber: "+15550100", relayNodeId: "node-1", online: true });
+      // A phone reported offline keeps its last sighting; the computer's moves on.
+      const again = await signedPost(server, "/api/nextgent/devices/status", { companyId, nodeId: "node-1", phones: [{ deviceId: "android.primary", sim: "absent", online: false }], lastSeenAt: new Date(Date.now() + 5000).toISOString() });
+      expect(again.body.phones[0]).toMatchObject({ simStatus: "absent", lastSeenAt: later, phoneNumber: "+15550100" });
+      expect(new Date(again.body.computer.lastSeenAt).getTime()).toBeGreaterThan(new Date(later).getTime());
+      // Another company cannot claim this node through a status push.
+      expect((await signedPost(server, "/api/nextgent/devices/status", { companyId: otherCompany, nodeId: "node-1", lastSeenAt: later })).status).toBe(409);
+      const listed = await request(asActor(owner, fetch)).get(`/api/companies/${companyId}/devices`);
+      expect(listed.body.devices.map((d: { kind: string }) => d.kind)).toEqual(["android", "computer"]);
+
+      // The fleet view for Plat-admin.
+      const admin = { type: "board", source: "session", userId: "admin", companyIds: [], isInstanceAdmin: true };
+      const fleet = await request(asActor(admin, fetch)).get(`/api/admin/nextgent/devices?companyId=${companyId}&online=1`);
+      expect(fleet.status).toBe(200);
+      expect(fleet.body.devices).toHaveLength(2);
+      expect(fleet.body.devices[0]).toMatchObject({ companyId, companyName: "DEV" });
+      expect((await request(asActor(admin, fetch)).get(`/api/admin/nextgent/devices?online=0`)).body.devices).toHaveLength(0);
+      expect((await request(asActor(owner, fetch)).get(`/api/admin/nextgent/devices`)).status).toBe(403);
+
+      // Unlink: gcr-api-clean revokes the node; the rows stay, marked unlinked; the device token dies with them.
+      const unlinked = await request(asActor(owner, fetch)).delete(`/api/companies/${companyId}/devices/${paired.body.id}`);
+      expect(unlinked.status).toBe(200);
+      expect(unlinked.body).toEqual({ unlinked: true, id: paired.body.id });
+      expect(calls.at(-1)).toMatchObject({ method: "POST", url: `${GCR}/api/nextgent/nodes/node-1/revoke`, body: { companyId } });
+      const after = await db.select().from(nextgentDevices).where(eq(nextgentDevices.companyId, companyId));
+      expect(after).toHaveLength(2);
+      expect(after.every((row) => row.unlinkedAt !== null)).toBe(true);
+      expect((await request(asActor(owner, fetch)).get(`/api/companies/${companyId}/devices`)).body.devices).toEqual([]);
+      expect((await asBox(`/api/companies/${companyId}/devices`)).status).toBe(401);
+      expect(await db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "nextgent.device_unlinked")))).toHaveLength(1);
+      expect((await request(asActor(owner, fetch)).delete(`/api/companies/${companyId}/devices/${randomUUID()}`)).status).toBe(404);
+    });
+
+    it("keeps no row and no live token when gcr-api-clean refuses the code, and refuses to pair without an assistant", async () => {
+      const companyId = await seedCompany("REF");
+      const devices = nextgentDeviceService(db, { config: configWith(), fetch: fakeUpstream({}).fetch });
+      await expect(devices.pair(companyId, { code: "NOPE-0000" }, "owner-REF")).rejects.toMatchObject({ status: 409 });
+      await nextgentCompanySetup(db, { config: configWith() }).ensureAssistant(companyId);
+      const { fetch } = fakeUpstream({ "POST /api/nextgent/nodes/pair": () => ({ status: 404, body: { error: "No pairing with that code.", reason: "expired" } }) });
+      await expect(nextgentDeviceService(db, { config: configWith(), fetch }).pair(companyId, { code: "NOPE-0000" }, "owner-REF")).rejects.toMatchObject({ status: 404 });
+      expect(await db.select().from(nextgentDevices).where(eq(nextgentDevices.companyId, companyId))).toEqual([]);
+      const keys = await db.select().from(agentApiKeys).where(eq(agentApiKeys.companyId, companyId));
+      expect(keys).toHaveLength(1);
+      expect(keys[0].revokedAt).not.toBeNull();
+    });
+
+    it("marks every device unlinked and revokes its token when the business unlinks (DECISIONS #78)", async () => {
+      const companyId = await seedCompany("BUL");
+      await nextgentCompanySetup(db, { config: configWith() }).ensureAssistant(companyId);
+      const { calls, fetch } = fakeUpstream({
+        ...nodeAnswers(new Date().toISOString()),
+        "POST /api/nextgent/link": () => ({ body: { entitySlug: "bul", forwardingAddress: null, businessToken: "biz-token" } }),
+      });
+      const links = nextgentBusinessLinkService(db, { config: configWith(), fetch });
+      await links.link(companyId, { entitySlug: "bul" }, "owner-BUL");
+      const devices = nextgentDeviceService(db, { config: configWith(), fetch });
+      const computer = await devices.pair(companyId, { code: "ABCD-1234" }, "owner-BUL");
+      await devices.applyStatus({ companyId, nodeId: "node-1", phones: [{ deviceId: "android.primary", sim: "ready" }] });
+      expect(await devices.list(companyId)).toHaveLength(2);
+      const result = await links.unlink(companyId, false, "owner-BUL");
+      expect(result.unlinked).toBe(true);
+      expect(await devices.list(companyId)).toEqual([]);
+      const rows = await db.select().from(nextgentDevices).where(eq(nextgentDevices.companyId, companyId));
+      expect(rows).toHaveLength(2);
+      expect(rows.every((row) => row.unlinkedAt !== null)).toBe(true);
+      const key = await db.select().from(agentApiKeys).where(and(eq(agentApiKeys.companyId, companyId), sql`${agentApiKeys.scopeConfig}->>'deviceId' = ${computer.id}`)).then((r) => r[0]);
+      expect(key.revokedAt).not.toBeNull();
+      expect(await secretByName(companyId, NEXTGENT_SECRET_NAMES.ghostMcpToken)).toBeNull();
+      // gcr-api-clean revokes the nodes on its side as part of /unlink; Paperclip does not call revoke per node.
+      expect(calls.filter((c) => c.url.endsWith("/revoke"))).toHaveLength(0);
+      expect(calls.at(-1)).toMatchObject({ url: `${GCR}/api/nextgent/unlink` });
+      const unlinkedActivity = await db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "nextgent.business_unlinked")));
+      expect(unlinkedActivity[0].details).toMatchObject({ devicesUnlinked: 2 });
+    });
+
+    it("computes online from the configured window and reports unknown without one", async () => {
+      const { onlineFrom } = await import("../services/nextgent-devices.js");
+      const now = Date.parse("2026-10-04T12:00:00Z");
+      expect(onlineFrom(new Date(now - 60_000), 180, now)).toBe(true);
+      expect(onlineFrom(new Date(now - 181_000), 180, now)).toBe(false);
+      expect(onlineFrom(null, 180, now)).toBe(false);
+      expect(onlineFrom(new Date(now), null, now)).toBeNull();
+    });
+  });
+
+  it("stores a receipt whose target is empty, keeping the capability it names (DECISIONS #79)", async () => {
+    const companyId = await seedCompany("TGT");
+    const inbound = nextgentInboundService(db, { config: configWith() });
+    const [issue] = await db.insert(issues).values({ companyId, title: "Set Saturday availability", identifier: "TGT-1" } as never).returning();
+    await inbound.recordReceipt({ companyId, taskId: "TGT-1", action: "update_google_business_attribute", capability: "gbp.attributes", target: "", verified: true, at: "2026-10-04T12:00:00Z" });
+    await inbound.recordReceipt({ companyId, action: "sms.send", verified: false, at: "2026-10-04T12:01:00Z" });
+    const listed = await inbound.listReceipts(companyId, { limit: 10, offset: 0 });
+    expect(listed.receipts[1]).toMatchObject({ action: "update_google_business_attribute", capability: "gbp.attributes", target: "", taskId: issue.id });
+    expect(listed.receipts[0]).toMatchObject({ action: "sms.send", target: null, capability: null });
+    const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issue.id));
+    expect(comments[0].body.split("\n")[0]).toBe("**Verified:** update_google_business_attribute");
   });
 
   it("boot sync writes config for companies linked before the plugin was installed", async () => {

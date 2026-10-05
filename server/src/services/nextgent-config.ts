@@ -70,6 +70,14 @@ export interface NextgentConfig {
     /** Currency used when a price is set without one (ISO 4217). */
     defaultCurrency: string | null;
   };
+  devices: {
+    /**
+     * A device is "online" when its last_seen_at is within this many seconds
+     * (NEXTGENT_DEVICE_ONLINE_SECONDS, DECISIONS #73). Unset: online is not
+     * computed (null) and screens show last_seen_at only.
+     */
+    onlineSeconds: number | null;
+  };
 }
 
 /** An on/off setting: "true", "1", "yes" or "on" (any case) switch it on; anything else is off. */
@@ -111,6 +119,7 @@ export function readNextgentConfig(env: Env = process.env): NextgentConfig {
       intervals: list(env, "NEXTGENT_STORE_PRICE_INTERVALS"),
       defaultCurrency: read(env, "NEXTGENT_STORE_CURRENCY")?.toLowerCase() ?? null,
     },
+    devices: { onlineSeconds: positiveInt(env, "NEXTGENT_DEVICE_ONLINE_SECONDS") },
   };
 }
 
@@ -127,5 +136,7 @@ export function litellmConfigured(config: NextgentConfig) {
 export const NEXTGENT_SECRET_NAMES = {
   businessToken: "NEXTGENT_BUSINESS_TOKEN",
   litellmKey: "NEXTGENT_LITELLM_KEY",
+  /** The Ghost MCP credential for the cloud assistant, minted by gcr-api-clean at device pairing (DECISIONS #74). */
+  ghostMcpToken: "NEXTGENT_GHOST_MCP_TOKEN",
   installToken: (installId: string) => `NEXTGENT_INSTALL_TOKEN_${installId.replace(/-/g, "").toUpperCase()}`,
 } as const;

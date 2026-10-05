@@ -8,12 +8,22 @@ import type { NextgentConfig } from "../services/nextgent-config.js";
 const mockAccess = vi.hoisted(() => ({ getMembership: vi.fn() }));
 const mockLinks = vi.hoisted(() => ({ get: vi.fn(), link: vi.fn(), unlink: vi.fn() }));
 const mockInbound = vi.hoisted(() => ({ recordReceipt: vi.fn(), recordConversation: vi.fn() }));
+const mockDevices = vi.hoisted(() => ({ list: vi.fn(), listAll: vi.fn(), pair: vi.fn(), unlink: vi.fn(), applyStatus: vi.fn() }));
 
 vi.mock("../services/access.js", () => ({ accessService: () => mockAccess }));
 vi.mock("../services/nextgent-business-link.js", () => ({ nextgentBusinessLinkService: () => mockLinks }));
 vi.mock("../services/nextgent-inbound.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/nextgent-inbound.js")>();
   return { ...actual, nextgentInboundService: () => mockInbound };
+});
+// The device service's own dependencies are heavy (agents, secrets); the routes are what is under test here.
+vi.mock("../services/agents.js", () => ({ agentService: () => ({}) }));
+vi.mock("../services/nextgent-company-setup.js", () => ({ nextgentCompanySetup: () => ({}) }));
+vi.mock("../services/nextgent-secrets.js", () => ({ nextgentSecrets: () => ({}) }));
+vi.mock("../services/activity-log.js", () => ({ logActivity: vi.fn() }));
+vi.mock("../services/nextgent-devices.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/nextgent-devices.js")>();
+  return { ...actual, nextgentDeviceService: () => mockDevices };
 });
 
 const SECRET = "shared-secret";
@@ -29,6 +39,7 @@ const config: NextgentConfig = {
   businessTokenTtlSeconds: 300,
   acceptLegacySignatures: false,
   storePricing: { models: [], intervals: [], defaultCurrency: null },
+  devices: { onlineSeconds: 180 },
 };
 
 /** Minimal db: every select returns `rows`. */
@@ -298,6 +309,17 @@ describe("signed inbound endpoints (contract §5)", () => {
     expect(lenient.status).toBe(201);
   });
 
+  it("accepts a receipt without a target when the action names what happened (DECISIONS #79)", async () => {
+    mockInbound.recordReceipt.mockResolvedValue({ id: "r2", taskId: null });
+    const { target: _omitted, ...noTarget } = receipt;
+    for (const payload of [noTarget, { ...noTarget, target: "" }, { ...noTarget, capability: "gbp.attributes" }]) {
+      const body = JSON.stringify(payload);
+      const res = await request(await appAs(null)).post("/api/nextgent/receipts").set(signed("/api/nextgent/receipts", body)).set("content-type", "application/json").send(body);
+      expect(res.status).toBe(201);
+    }
+    expect(mockInbound.recordReceipt).toHaveBeenLastCalledWith(expect.objectContaining({ capability: "gbp.attributes" }));
+  });
+
   it("validates a signed receipt's shape", async () => {
     const body = JSON.stringify({ companyId: "company-1", action: "x" });
     const res = await request(await appAs(null))
@@ -345,5 +367,99 @@ describe("signed inbound endpoints (contract §5)", () => {
     expect((await post({ companyId: "nextgent", channel: "sms", outcome: "x".repeat(501) })).status).toBe(400);
     expect((await post({ companyId: "nextgent", channel: "sms", turns: -1 })).status).toBe(400);
     expect((await post({ companyId: "nextgent", channel: "chat" })).status).toBe(400);
+  });
+});
+
+describe("devices (SPEC §5)", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const device = { id: "11111111-1111-4111-8111-111111111111", companyId: "company-1", kind: "computer", relayNodeId: "node-1", online: true };
+
+  it("lists the company's devices for any member and for the box's own device token", async () => {
+    mockDevices.list.mockResolvedValue([device]);
+    const res = await request(await appAs(session("user-2"))).get("/api/companies/company-1/devices");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ devices: [device], onlineSeconds: 180 });
+    const box = { type: "agent", source: "agent_key", agentId: "a1", companyId: "company-1", keyScope: { kind: "device", deviceId: device.id } };
+    expect((await request(await appAs(box)).get("/api/companies/company-1/devices")).status).toBe(200);
+    expect((await request(await appAs(box)).get("/api/companies/company-2/devices")).status).toBe(403);
+    expect((await request(await appAs(session("stranger", { companyIds: [] }))).get("/api/companies/company-1/devices")).status).toBe(403);
+  });
+
+  it("lets owners and admins pair, refuses other members, and passes the code and name through", async () => {
+    mockAccess.getMembership.mockResolvedValue({ status: "active", membershipRole: "admin" });
+    mockDevices.pair.mockResolvedValue(device);
+    const res = await request(await appAs(session("user-1"))).post("/api/companies/company-1/devices/pair").send({ code: "ABCD-1234", name: "Shop box" });
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual(device);
+    expect(mockDevices.pair).toHaveBeenCalledWith("company-1", { code: "ABCD-1234", name: "Shop box" }, "user-1");
+    expect((await request(await appAs(session("user-1"))).post("/api/companies/company-1/devices/pair").send({})).status).toBe(400);
+    mockAccess.getMembership.mockResolvedValue({ status: "active", membershipRole: "operator" });
+    expect((await request(await appAs(session("user-2"))).post("/api/companies/company-1/devices/pair").send({ code: "ABCD-1234" })).status).toBe(403);
+    expect((await request(await appAs(session("user-2"))).delete(`/api/companies/company-1/devices/${device.id}`)).status).toBe(403);
+    expect(mockDevices.pair).toHaveBeenCalledTimes(1);
+    expect(mockDevices.unlink).not.toHaveBeenCalled();
+  });
+
+  it("passes gcr-api-clean's refusal of a code through, and unlinks", async () => {
+    const { HttpError } = await import("../errors.js");
+    mockAccess.getMembership.mockResolvedValue({ status: "active", membershipRole: "owner" });
+    mockDevices.pair.mockRejectedValue(new HttpError(404, "No pairing with that code.", { upstreamStatus: 404, upstream: { reason: "expired" } }));
+    const refused = await request(await appAs(session("user-1"))).post("/api/companies/company-1/devices/pair").send({ code: "GONE-0000" });
+    expect(refused.status).toBe(404);
+    expect(refused.body).toEqual({ error: "No pairing with that code.", reason: "expired" });
+    mockDevices.unlink.mockResolvedValue({ unlinked: true, id: device.id });
+    const res = await request(await appAs(session("user-1"))).delete(`/api/companies/company-1/devices/${device.id}`);
+    expect(res.status).toBe(200);
+    expect(mockDevices.unlink).toHaveBeenCalledWith("company-1", device.id, "user-1");
+  });
+
+  it("gives instance admins the fleet list, narrowed by company and online state", async () => {
+    mockDevices.listAll.mockResolvedValue([{ ...device, companyName: "Shop" }]);
+    const admin = session("admin", { isInstanceAdmin: true, companyIds: [] });
+    const res = await request(await appAs(admin)).get("/api/admin/nextgent/devices?companyId=22222222-2222-4222-8222-222222222222&online=true");
+    expect(res.status).toBe(200);
+    expect(mockDevices.listAll).toHaveBeenCalledWith({ companyId: "22222222-2222-4222-8222-222222222222", online: true });
+    await request(await appAs(admin)).get("/api/admin/nextgent/devices?online=false");
+    expect(mockDevices.listAll).toHaveBeenLastCalledWith({ companyId: null, online: false });
+    await request(await appAs(admin)).get("/api/admin/nextgent/devices");
+    expect(mockDevices.listAll).toHaveBeenLastCalledWith({ companyId: null, online: null });
+    expect((await request(await appAs(session("user-1"))).get("/api/admin/nextgent/devices")).status).toBe(403);
+  });
+
+  it("takes a signed status push and refuses an unsigned or malformed one", async () => {
+    mockDevices.applyStatus.mockResolvedValue({ computer: device, phones: [] });
+    const status = { companyId: "company-1", nodeId: "node-1", version: "1.2.0", capabilities: ["sms.send"], phones: [{ deviceId: "android.primary", sim: "ready", online: true }], lastSeenAt: "2026-10-04T12:00:00Z" };
+    const app = await appAs(null);
+    expect((await request(app).post("/api/nextgent/devices/status").send(status)).status).toBe(401);
+    const body = JSON.stringify(status);
+    const res = await request(app).post("/api/nextgent/devices/status").set(signed("/api/nextgent/devices/status", body)).set("content-type", "application/json").send(body);
+    expect(res.status).toBe(200);
+    expect(mockDevices.applyStatus).toHaveBeenCalledWith(status);
+    const bad = JSON.stringify({ companyId: "company-1" });
+    expect((await request(app).post("/api/nextgent/devices/status").set(signed("/api/nextgent/devices/status", bad)).set("content-type", "application/json").send(bad)).status).toBe(400);
+  });
+
+  it("holds a device token to its four reads in its own company (DECISIONS #71)", async () => {
+    const { nextgentDeviceTokenGuard } = await import("../middleware/nextgent-device-token.js");
+    const { errorHandler } = await import("../middleware/index.js");
+    const guarded = (actor: Record<string, unknown>) => {
+      const app = express();
+      app.use((req, _res, next) => { (req as unknown as { actor: unknown }).actor = actor; next(); });
+      app.use(nextgentDeviceTokenGuard());
+      app.all("/{*path}", (_req, res) => res.json({ reached: true }));
+      app.use(errorHandler);
+      return app;
+    };
+    const box = guarded({ type: "agent", source: "agent_key", agentId: "a1", companyId: "company-1", keyScope: { kind: "device", deviceId: "d1" } });
+    for (const path of ["devices", "store", "approvals", "activity"]) expect((await request(box).get(`/api/companies/company-1/${path}`)).status).toBe(200);
+    expect((await request(box).get("/api/companies/company-1/approvals?status=pending")).status).toBe(200);
+    expect((await request(box).get("/api/companies/company-2/devices")).status).toBe(403);
+    expect((await request(box).post("/api/companies/company-1/devices/pair").send({ code: "x" })).status).toBe(403);
+    expect((await request(box).get("/api/companies/company-1/issues")).status).toBe(403);
+    expect((await request(box).get("/api/companies/company-1/store/item-1/consent")).status).toBe(403);
+    expect((await request(box).get("/api/agents/me")).status).toBe(403);
+    // Other principals are untouched.
+    expect((await request(guarded({ type: "agent", source: "agent_key", agentId: "a1", companyId: "company-1" })).post("/api/companies/company-1/issues")).status).toBe(200);
+    expect((await request(guarded(session("user-1"))).post("/api/companies/company-1/devices/pair")).status).toBe(200);
   });
 });

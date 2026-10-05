@@ -84,6 +84,33 @@ function businessKindsOf(answer: unknown): GcrBusinessKind[] {
   return kinds;
 }
 
+/** `POST /api/nextgent/nodes/pair`: Paperclip approves a pairing code, gcr-api-clean enrols the relay node (DECISIONS #69). */
+export interface GcrPairNodeRequest {
+  companyId: string;
+  code: string;
+  name?: string;
+  /** Who approved, e.g. `paperclip:<userId>`. */
+  approvedBy: string;
+  /** The device token Paperclip minted; the box receives it through `/pair/poll` (DECISIONS #71). */
+  deviceToken?: string;
+}
+
+/** A relay node as gcr-api-clean reports it (`ghost_nodes`). */
+export interface GcrNode {
+  id: string;
+  name?: string | null;
+  version?: string | null;
+  health?: unknown;
+  last_seen_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface GcrPairNodeResponse {
+  node: GcrNode;
+  /** The Ghost MCP credential for the cloud assistant, returned once (DECISIONS #74). */
+  ghostMcpToken?: string | null;
+}
+
 export interface GcrEntitlement {
   allowed: boolean;
   reason?: string;
@@ -196,6 +223,17 @@ export function gcrClient(options: { config?: NextgentConfig; fetch?: FetchLike 
       ),
     /** The kinds of the linked businesses, with the companies of each, for the store's "kind" audience. */
     businessKinds: async () => businessKindsOf(await call<unknown>("GET", "/api/nextgent/business-kinds")),
+    /** Approve a pairing code for a company's relay node; gcr-api-clean enrols it and answers with the node and the assistant's Ghost MCP token. */
+    pairNode: (input: GcrPairNodeRequest) => call<GcrPairNodeResponse>("POST", "/api/nextgent/nodes/pair", input),
+    /** Revoke a relay node (its token stops working) on unlink. */
+    revokeNode: (nodeId: string, companyId: string) =>
+      call<Record<string, unknown>>("POST", `/api/nextgent/nodes/${encodeURIComponent(nodeId)}/revoke`, { companyId }),
+    /** The company's relay nodes as gcr-api-clean sees them (live detail; the registry here is ownership and state). */
+    nodes: async (companyId: string) => {
+      const answer = await call<unknown>("GET", `/api/nextgent/nodes?${new URLSearchParams({ companyId }).toString()}`);
+      const list = Array.isArray(answer) ? answer : (answer as { nodes?: unknown })?.nodes;
+      return (Array.isArray(list) ? list : []).filter((n): n is GcrNode => Boolean(n) && typeof n === "object" && typeof (n as GcrNode).id === "string");
+    },
   };
 }
 

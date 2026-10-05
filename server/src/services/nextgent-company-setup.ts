@@ -129,6 +129,8 @@ export function nextgentCompanySetup(db: Db, options: { config?: NextgentConfig;
   return {
     ensureLitellmKey,
     ensureAssistant,
+    /** The company's assistant agent id (the marked one, or the one carrying the configured name), or null. */
+    findAssistant: (companyId: string) => findAssistant(companyId, config.assistant.name),
 
     /** Run the sign-up setup job. Never throws: a failed step must not undo the sign-up. */
     async runAccountSetup(companyId: string, userId: string | null) {

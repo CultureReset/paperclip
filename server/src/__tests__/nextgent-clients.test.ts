@@ -24,6 +24,7 @@ const config: NextgentConfig = {
   businessTokenTtlSeconds: 300,
   acceptLegacySignatures: false,
   storePricing: { models: [], intervals: [], defaultCurrency: null },
+  devices: { onlineSeconds: 180 },
 };
 
 function recordingFetch(response: { status?: number; body?: unknown } = {}) {
@@ -140,6 +141,26 @@ describe("gcr-api-clean client (contract §4)", () => {
         signature: headers["x-nextgent-signature"],
       }),
     ).toEqual({ ok: true });
+  });
+
+  it("pairs, revokes and lists relay nodes at the device paths (DECISIONS #69)", async () => {
+    const { calls, fetch } = recordingFetch({ body: { node: { id: "node-1", name: "Box" }, ghostMcpToken: "gcr_mcp_ghost.x" } });
+    const client = gcrClient({ config, fetch });
+    const paired = await client.pairNode({ companyId: "c1", code: "ABCD-1234", name: "Box", approvedBy: "paperclip:u1", deviceToken: "pcp_device" });
+    expect(paired.node.id).toBe("node-1");
+    expect(calls[0].url).toBe("https://gcr.example.test/api/nextgent/nodes/pair");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ companyId: "c1", code: "ABCD-1234", name: "Box", approvedBy: "paperclip:u1", deviceToken: "pcp_device" });
+    await client.revokeNode("node/1", "c1");
+    expect(calls[1].url).toBe("https://gcr.example.test/api/nextgent/nodes/node%2F1/revoke");
+    expect(calls[1].init.method).toBe("POST");
+    expect(JSON.parse(String(calls[1].init.body))).toEqual({ companyId: "c1" });
+    const listed = recordingFetch({ body: { nodes: [{ id: "node-1" }, { nope: true }, null] } });
+    const nodes = await gcrClient({ config, fetch: listed.fetch }).nodes("c1");
+    expect(listed.calls[0].url).toBe("https://gcr.example.test/api/nextgent/nodes?companyId=c1");
+    expect(listed.calls[0].init.method).toBe("GET");
+    expect(nodes).toEqual([{ id: "node-1" }]);
+    const bare = recordingFetch({ body: [{ id: "node-2" }] });
+    expect(await gcrClient({ config, fetch: bare.fetch }).nodes("c1")).toEqual([{ id: "node-2" }]);
   });
 
   it("passes client errors through and maps server errors to 502", async () => {
