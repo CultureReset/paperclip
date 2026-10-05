@@ -20,6 +20,10 @@ import {
   type NextgentStoreBridge,
 } from "./nextgent-store.js";
 import { MENU_CATALOG, menuFromPayload } from "./store-menu.js";
+import { automationOf } from "./automation/definition.js";
+import { automationInstalls, type AutomationInstalls } from "./automation/install.js";
+import { entitlementService, entitlementSource, type EntitlementService } from "./entitlement/index.js";
+import { validateAutomationDefinition } from "@paperclipai/shared";
 
 /** Mirrors the store_items_kind_check constraint (packages/db/src/schema/store.ts). */
 export const STORE_ITEM_KINDS = ["plugin", "pack", "skill", "automation", "connector", "agent", "app", "layout"] as const;
@@ -64,6 +68,10 @@ type StoreItemRow = typeof storeItems.$inferSelect;
 type StoreVersionRow = typeof storeItemVersions.$inferSelect;
 type StoreInstallRow = typeof storeInstalls.$inferSelect;
 
+/** Who may have an item (DECISIONS #83): everyone, the company's plan, or a grant only. */
+export const STORE_ACCESS_MODES = ["free", "plan", "grant"] as const;
+export type StoreAccessMode = (typeof STORE_ACCESS_MODES)[number];
+
 export interface StoreItemInput {
   key: string;
   kind: StoreItemKind;
@@ -72,6 +80,7 @@ export interface StoreItemInput {
   description?: string | null;
   iconUrl?: string | null;
   pluginKey?: string | null;
+  access?: StoreAccessMode | null;
 }
 
 export interface StoreVersionInput {
@@ -127,10 +136,16 @@ export interface StoreSubscriptionInput {
  * The platform store. The instance admin publishes items; a company sees an
  * item inside its workspace only after installing it.
  */
-export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; defaultCurrency?: string | null } = {}) {
+export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; defaultCurrency?: string | null; entitlement?: EntitlementService; automations?: AutomationInstalls; env?: Record<string, string | undefined> } = {}) {
   const plugins = pluginRegistryService(db);
   const content = storeContentService(db);
   const bridge = options.bridge ?? nextgentStoreBridge(db);
+  const automations = options.automations ?? automationInstalls(db);
+  // Who decides entitlement and holds prices (DECISIONS #83): gcr-api-clean until Phase C, then this server (ENTITLEMENT_SOURCE=paperclip).
+  const source = entitlementSource(options.env ?? process.env);
+  const local = options.entitlement ?? entitlementService(db);
+  const assertEntitled = (companyId: string, itemKey: string) =>
+    source === "paperclip" ? local.assertEntitled(companyId, itemKey) : bridge.assertEntitled(companyId, itemKey);
 
   /**
    * A release that asks for business data the owner has not approved never
@@ -150,6 +165,8 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
     await applyToCompany(item, install.companyId, true);
     try {
       await content.sync(install.companyId, item, version.payload, userId, install.id);
+      // An automation's "steps" routine, definition pinned to this release (DECISIONS #82).
+      if (item.kind === "automation") await automations.install({ companyId: install.companyId, item, version, userId, enabled: true, installId: install.id });
       return await bridge.activate({
         item,
         install,
@@ -201,6 +218,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
   async function moveInstall(item: StoreItemRow, install: StoreInstallRow, version: StoreVersionRow, userId: string | null) {
     // A switched-off install only records the release; it is created when turned on.
     if (install.enabled) await content.sync(install.companyId, item, version.payload, userId, install.id);
+    if (install.enabled && item.kind === "automation") await automations.install({ companyId: install.companyId, item, version, userId, enabled: true, installId: install.id });
     const [updated] = await db
       .update(storeInstalls)
       .set({ versionId: version.id, updatedAt: new Date() })
@@ -373,16 +391,17 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       if (duplicate.length > 0) throw conflict(`A store item with key "${input.key}" already exists`);
       const [item] = await db
         .insert(storeItems)
-        .values({ ...input, pluginKey: input.pluginKey ?? null, createdByUserId: userId })
+        .values({ ...input, access: input.access ?? "free", pluginKey: input.pluginKey ?? null, createdByUserId: userId })
         .returning();
       return item;
     },
 
     async update(itemId: string, patch: Partial<Omit<StoreItemInput, "key" | "kind" | "pluginKey">>) {
       await getItem(itemId);
+      const { access, ...rest } = patch;
       const [item] = await db
         .update(storeItems)
-        .set({ ...patch, updatedAt: new Date() })
+        .set({ ...rest, ...(access ? { access } : {}), updatedAt: new Date() })
         .where(eq(storeItems.id, itemId))
         .returning();
       return item;
@@ -405,6 +424,13 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         throw badRequest(`A ${item.kind} item's release must declare nextgent.kind "${item.kind}"`);
       }
       if (item.kind === "app") assertAppManifest(payload, item, input.version);
+      if (item.kind === "automation") {
+        const definition = automationOf(payload);
+        if (!definition) throw badRequest("Release content is not valid: payload.automation must be the automation definition (trigger, steps, config_schema)");
+        const problems = validateAutomationDefinition({ name: item.name, ...definition }, {});
+        if (problems.length) throw badRequest(`Release automation is not valid: ${problems.join(" ")}`, { problems });
+        if (!definition.steps.length) throw badRequest("Release automation is not valid: add at least one step.");
+      }
       if (item.kind === "layout" && !payload.layout) {
         throw badRequest("Release content is not valid: payload.layout must be the layout object (id, version)");
       }
@@ -570,7 +596,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       const version = await newestFor(itemId, channel);
       if (!version) throw conflict(`${item.name} has no release on the ${channel} channel`);
       // Plan check and price first: nothing is created for an item the business may not have.
-      const charge = await bridge.assertEntitled(companyId, item.key);
+      const charge = await assertEntitled(companyId, item.key);
       const installId = randomUUID();
       const [install] = await db
         .insert(storeInstalls)
@@ -691,7 +717,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
               })
               .returning();
             if (entry.enabled) {
-              await bridge.assertEntitled(entry.companyId, item.key);
+              await assertEntitled(entry.companyId, item.key);
               await bringUp(item, created, version, userId, []);
               const [on] = await db.update(storeInstalls).set({ enabled: true, updatedAt: new Date() }).where(eq(storeInstalls.id, created.id)).returning();
               await bridge.setEnabled(on, true);
@@ -753,7 +779,8 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       const currency = (input.currency ?? options.defaultCurrency ?? readNextgentConfig().storePricing.defaultCurrency)?.trim().toLowerCase() ?? null;
       if (!currency) throw unprocessable("Send a currency, or set NEXTGENT_STORE_CURRENCY on the server");
       const price = { amountCents, currency, interval: input.interval?.trim() || null, model: input.model?.trim() || null };
-      const billing = await bridge.setPrice(item.key, price);
+      // With ENTITLEMENT_SOURCE=paperclip the price here is the price (DECISIONS #83); nothing is forwarded.
+      const billing = source === "paperclip" ? { authoritative: "paperclip" } : await bridge.setPrice(item.key, price);
       const [updated] = await db
         .update(storeItems)
         .set({
@@ -770,7 +797,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         itemKey: item.key,
         price: priceOf(updated),
         billing,
-        ...(billing === null ? { warning: "gcr-api-clean is not configured; the price is not billed" } : {}),
+        ...(billing === null && source !== "paperclip" ? { warning: "gcr-api-clean is not configured; the price is not billed" } : {}),
       };
     },
 
@@ -787,7 +814,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         ? await db.select().from(storeItemVersions).where(eq(storeItemVersions.id, install.versionId)).then((rows) => rows[0] ?? null)
         : await newestFor(itemId, install.channel);
       if (!version) throw conflict(`${item.name} has no release to turn on`);
-      const charge = await bridge.assertEntitled(companyId, item.key);
+      const charge = await assertEntitled(companyId, item.key);
       const activation = await bringUp(item, install, version, userId, options.declinedPermissions ?? []);
       const [enabled] = await db
         .update(storeInstalls)
@@ -805,6 +832,8 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       if (!install) throw notFound(`${item.name} is not installed`);
       // gcr-api-clean revokes the install's token and disables its automation first.
       const finish = await bridge.deactivate(install);
+      // The automation's routine is switched off; its settings and run history stay (DECISIONS #82).
+      if (item.kind === "automation") await automations.disable(companyId, item, userId);
       await content.remove(companyId, item, userId);
       await applyToCompany(item, companyId, false);
       await db.delete(storeInstalls).where(eq(storeInstalls.id, install.id));

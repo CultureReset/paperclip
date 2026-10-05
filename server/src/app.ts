@@ -56,6 +56,8 @@ import { storeRoutes } from "./routes/store.js";
 import { nextgentPublicRoutes, nextgentRoutes } from "./routes/nextgent.js";
 import { nextgentEventRoutes } from "./routes/nextgent-events.js";
 import { notificationRoutes } from "./routes/notifications.js";
+import { automationRoutes } from "./routes/automations.js";
+import { entitlementRoutes } from "./routes/entitlement.js";
 import { nextgentDeviceTokenGuard } from "./middleware/nextgent-device-token.js";
 import { nextgentBusinessPlugin } from "./services/nextgent-business-plugin.js";
 import { agentRoutes } from "./routes/agents.js";
@@ -678,6 +680,8 @@ export async function createApp(
   api.use(storeRoutes(db));
   api.use(nextgentRoutes(db));
   api.use(notificationRoutes(db));
+  api.use(automationRoutes(db));
+  api.use(entitlementRoutes(db));
   // The setup-token login session service. The router builds it and hands it
   // back through the callback below, so the shutdown hook can cancel every live
   // session (SR-4).

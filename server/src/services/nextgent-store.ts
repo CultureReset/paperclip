@@ -9,6 +9,7 @@ import { nextgentBusinessPlugin } from "./nextgent-business-plugin.js";
 import { gcrClient, type FetchLike, type GcrBusinessKind, type GcrEntitlement } from "./nextgent-gcr-client.js";
 import { nextgentSecrets } from "./nextgent-secrets.js";
 import { routineService } from "./routines.js";
+import { automationOf } from "./automation/definition.js";
 import {
   PLATFORM_RESOURCE_KEY_PREFIX,
   storeContentService,
@@ -341,7 +342,12 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
         return null;
       }
       const kind = section?.kind ?? (input.item.kind as "app" | "layout");
-      const routine = input.firstActivation && section ? await createHandoffRoutine(input.install.companyId, input.item, section, input.userId) : null;
+      // An automation that carries its definition runs on this server's step
+      // runner; its agent step hands work over in-process (DECISIONS #82), so
+      // no hand-off webhook is created for it. Older releases keep the webhook.
+      const routine = input.firstActivation && section && !automationOf(input.version.payload)
+        ? await createHandoffRoutine(input.install.companyId, input.item, section, input.userId)
+        : null;
       const result = await gcr.install({
         companyId: input.install.companyId,
         installId: input.install.id,
@@ -355,7 +361,8 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
         ...projectedManifest(input.item.kind, input.version.payload),
         enabled: input.install.enabled,
       });
-      if (typeof result?.token === "string" && result.token && kind !== "automation") {
+      // An automation's token is kept too: the step runner acts on the business through the MCP with it (DECISIONS #87).
+      if (typeof result?.token === "string" && result.token) {
         await storeInstallToken(input.install, result.token, input.userId);
       }
       // Rewritten with or without a token: an agent whose install got none is

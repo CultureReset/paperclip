@@ -6,6 +6,7 @@ import { forbidden } from "../errors.js";
 import { accessService } from "../services/access.js";
 import { normalizeHumanRole } from "../services/company-member-roles.js";
 import {
+  STORE_ACCESS_MODES,
   STORE_ADVISORY_TYPES,
   STORE_APPROVAL_MODES,
   STORE_AUDIENCE_MODES,
@@ -48,6 +49,8 @@ const createItemSchema = z.object({
   description: z.string().trim().max(10_000).nullish(),
   iconUrl: z.string().trim().url().nullish(),
   pluginKey: z.string().trim().min(1).nullish(),
+  /** Who may have it: free (default), plan or grant (DECISIONS #83). */
+  access: z.enum(STORE_ACCESS_MODES).optional(),
 });
 
 const updateItemSchema = z.object({
@@ -55,6 +58,7 @@ const updateItemSchema = z.object({
   summary: z.string().trim().max(280).nullish(),
   description: z.string().trim().max(10_000).nullish(),
   iconUrl: z.string().trim().url().nullish(),
+  access: z.enum(STORE_ACCESS_MODES).optional(),
 });
 
 const addVersionSchema = z.object({
@@ -179,6 +183,7 @@ export function storeRoutes(db: Db) {
     const businessKinds = await store.businessKinds();
     res.json({
       kinds: [...STORE_ITEM_KINDS],
+      accessModes: [...STORE_ACCESS_MODES],
       channels: [...STORE_CHANNELS],
       advisoryTypes: [...STORE_ADVISORY_TYPES],
       approvalModes: [...STORE_APPROVAL_MODES],

@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import { agents, companies, routines as routinesTable, storeInstallResources, storeItems } from "@paperclipai/db";
-import { AGENT_ROLES } from "@paperclipai/shared";
+import { AGENT_ROLES, automationDefinitionSchema } from "@paperclipai/shared";
 import type { Agent } from "@paperclipai/shared";
 import { badRequest, notFound } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -81,6 +81,12 @@ export const storePayloadSchema = z
       .object({ id: z.string().trim().min(1), version: z.string().trim().min(1) })
       .passthrough()
       .nullish(),
+    /**
+     * An automation (kind "automation"): { trigger, steps, config_schema }, the
+     * definition the step runner executes (SPEC §7, DECISIONS #82). Checked
+     * with validateAutomationDefinition when the version is added.
+     */
+    automation: automationDefinitionSchema.nullish(),
     /** Menu entries this item turns on, beyond the ones its agents, routines and skills need. */
     menu: z.array(z.enum(MENU_KEYS)).default([]),
     skills: z
@@ -266,6 +272,8 @@ export function assertAppManifest(payload: Record<string, unknown>, item: { key:
  * these never collide with them and a release sync leaves them alone.
  */
 export const PLATFORM_RESOURCE_KEY_PREFIX = "_";
+/** Resource key of the "steps" routine an automation install creates (services/automation/install.ts). It outlives the install: a reinstall finds its settings and runs. */
+export const AUTOMATION_ROUTINE_KEY = `${PLATFORM_RESOURCE_KEY_PREFIX}automation`;
 export function isPlatformResourceKey(key: string) {
   return key.startsWith(PLATFORM_RESOURCE_KEY_PREFIX);
 }
@@ -559,7 +567,8 @@ export function storeContentService(db: Db) {
 
     /** Take everything an item put inside the company back out. */
     async remove(companyId: string, item: ItemRow, userId: string | null) {
-      const existing = await bindingsFor(companyId, item.id);
+      // The automation's own routine is switched off, not removed: its settings and run history stay (DECISIONS #82; gcr uninstallFromStore).
+      const existing = (await bindingsFor(companyId, item.id)).filter((binding) => binding.resourceKey !== AUTOMATION_ROUTINE_KEY);
       const ordered = [...existing].sort((a, b) => (a.resourceKind === "routine" ? -1 : 0) - (b.resourceKind === "routine" ? -1 : 0));
       for (const binding of ordered) await removeResource(companyId, binding, userId);
     },
