@@ -228,8 +228,8 @@ reason, `changesThings` for write/send), `allowed`, `reason`, and
    webhook trigger (`signingMode: "hmac_sha256"`) — needs `PAPERCLIP_API_URL`
    or a public origin for the webhook URL;
 4. calls `POST /api/nextgent/installs` with the release's permissions (and
-   the routine's `webhookUrl`/`webhookSecret`), the manifest as `app` and the
-   install's `enabled` switch. An `app` or `layout` item is registered even
+   the routine's `webhookUrl`/`webhookSecret`), the manifest as `app` (a
+   layout's as `layout`, never `app`) and the install's `enabled` switch. An `app` or `layout` item is registered even
    when its release has no NEXT GENT section, so gcr-api-clean can project it
    into the business's page;
 5. stores a returned token as a company secret and binds it to the install's
@@ -262,8 +262,9 @@ optional), then `PATCH /api/nextgent/installs/{installId}` with
 
 A version move that changes no permissions (an automatic update, a push, an
 owner's update) is sent to gcr-api-clean as
-`PATCH /api/nextgent/installs/{installId}` with `{ version, app }`, so an
-app's projection follows the release. One that changes permissions
+`PATCH /api/nextgent/installs/{installId}` with `{ version, app }` (`{ version,
+layout }` for a layout, which never sends `app`), so the projection follows
+the release. One that changes permissions
 re-registers with `POST /api/nextgent/installs` as before.
 
 Agents an install creates carry `metadata.storeItemKey`, `metadata.installId`

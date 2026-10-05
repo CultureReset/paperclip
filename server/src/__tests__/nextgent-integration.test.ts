@@ -777,6 +777,7 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       const { calls, fetch } = fakeUpstream({
         "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
         "POST /api/nextgent/installs": () => ({ body: {} }),
+        "PATCH /api/nextgent/installs/:id": () => ({ body: { updated: true, projected: true } }),
       });
       const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
       const item = await store.create({ key: "front-page", kind: "layout", name: "Front page" }, null);
@@ -795,10 +796,18 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
         version: "1.0.0",
         permissions: [],
         optionalPermissions: [],
+        // The layout manifest travels as `layout`, never as `app` (gcr-api-clean layoutFrom, DECISIONS #31).
+        layout,
         enabled: true,
       });
       const [listed] = await store.listForCompany(companyId);
       expect(listed).toMatchObject({ kind: "layout", installId: install.id, app: null, approvedPermissions: [] });
+
+      // A version move re-sends the layout the new release carries.
+      const next = { id: "front-page", version: "1.1.0", slots: ["hero", "menu"] };
+      expect(await store.addVersion(item.id, { version: "1.1.0", payload: { layout: next } }, null)).toMatchObject({ appliedTo: 1 });
+      expect(calls.at(-1)).toMatchObject({ method: "PATCH", url: `${GCR}/api/nextgent/installs/${install.id}` });
+      expect(calls.at(-1)?.body).toEqual({ version: "1.1.0", layout: next });
     });
 
     it("shows an item's price and the install's version id in the company listing", async () => {

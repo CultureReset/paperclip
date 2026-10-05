@@ -39,11 +39,29 @@ export function isProjectedKind(kind: string) {
   return PROJECTED_KINDS.has(kind);
 }
 
+function manifestField(payload: unknown, field: "app" | "layout"): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object") return null;
+  const value = (payload as Record<string, unknown>)[field];
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
 /** The release's app manifest (`payload.app`) when it carries one. */
 export function appManifestOf(payload: unknown): Record<string, unknown> | null {
-  if (!payload || typeof payload !== "object") return null;
-  const app = (payload as Record<string, unknown>).app;
-  return app && typeof app === "object" && !Array.isArray(app) ? (app as Record<string, unknown>) : null;
+  return manifestField(payload, "app");
+}
+
+/**
+ * What gcr-api-clean projects for an install of `kind`: a layout's `layout`
+ * (`payload.layout`), anything else's `app`. A layout never sends `app`
+ * (gcr-api-clean layoutFrom, DECISIONS #31).
+ */
+function projectedManifest(kind: string, payload: unknown): { app: Record<string, unknown> } | { layout: Record<string, unknown> } | Record<never, never> {
+  if (kind === "layout") {
+    const layout = manifestField(payload, "layout");
+    return layout ? { layout } : {};
+  }
+  const app = manifestField(payload, "app");
+  return app ? { app } : {};
 }
 
 /** Whether gcr-api-clean has been told about this install (it was activated at least once). */
@@ -310,7 +328,6 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
       }
       const kind = section?.kind ?? (input.item.kind as "app" | "layout");
       const routine = input.firstActivation && section ? await createHandoffRoutine(input.install.companyId, input.item, section, input.userId) : null;
-      const app = appManifestOf(input.version.payload);
       const result = await gcr.install({
         companyId: input.install.companyId,
         installId: input.install.id,
@@ -321,7 +338,7 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
         // Which of those the owner could have declined; gcr-api-clean may ignore it.
         optionalPermissions: optionalGranted,
         ...(routine ? { routine } : {}),
-        ...(app ? { app } : {}),
+        ...projectedManifest(input.item.kind, input.version.payload),
         enabled: input.install.enabled,
       });
       if (typeof result?.token === "string" && result.token && kind !== "automation") {
@@ -345,17 +362,16 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
 
     /**
      * A version move that changes no permissions: gcr-api-clean is told the new
-     * version and the manifest it carries (`PATCH`), so an app's projection
-     * follows the release. Nothing to tell for an install it never got.
+     * version and the manifest it carries (`PATCH` with `app`, or `layout` for a
+     * layout), so the projection follows the release. Nothing to tell for an install it never got.
      */
-    async moveVersion(install: InstallRow, version: VersionRow) {
+    async moveVersion(item: ItemRow, install: InstallRow, version: VersionRow) {
       if (!registeredUpstream(install)) return null;
       if (!gcr.configured) {
         warnSkipped("install version update", { companyId: install.companyId, installId: install.id });
         return null;
       }
-      const app = appManifestOf(version.payload);
-      return gcr.patchInstall(install.id, { version: version.version, ...(app ? { app } : {}) });
+      return gcr.patchInstall(install.id, { version: version.version, ...projectedManifest(item.kind, version.payload) });
     },
 
     /** The owner's switch: gcr-api-clean's projection is turned on or off with it (`PATCH { enabled }`). */

@@ -45,15 +45,18 @@ export interface GcrInstallRequest {
   routine?: { webhookUrl: string; webhookSecret: string };
   /** An app's manifest (the release's `payload.app`), projected into the business (Step 3 contract §A). */
   app?: Record<string, unknown>;
+  /** A layout's manifest (the release's `payload.layout`); a layout never sends `app` (DECISIONS #31). */
+  layout?: Record<string, unknown>;
   /** Whether the install is switched on; a pushed install starts off until the owner turns it on. */
   enabled?: boolean;
 }
 
-/** `PATCH /api/nextgent/installs/:id`: the switch, a version move, the manifest that version carries. */
+/** `PATCH /api/nextgent/installs/:id`: the switch, a version move, the manifest that version carries (`app` or `layout`). */
 export interface GcrInstallPatch {
   enabled?: boolean;
   version?: string;
   app?: Record<string, unknown>;
+  layout?: Record<string, unknown>;
 }
 
 export interface GcrEntitlement {

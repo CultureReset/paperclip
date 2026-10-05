@@ -91,12 +91,16 @@ describe("gcr-api-clean client (contract §4)", () => {
     const app = { schema_version: 1, id: "k", version: "1.1.0", runtime: { type: "engine" }, ui: {}, permissions: [] };
     expect(await client.patchInstall("i1", { version: "1.1.0", app })).toEqual({ updated: true, projected: true });
     await client.patchInstall("i1", { enabled: false });
+    const layout = { id: "front-page", version: "2.0.0" };
+    await client.patchInstall("i2", { version: "2.0.0", layout });
     expect(calls.map((c) => `${c.init.method} ${c.url}`)).toEqual([
       "PATCH https://gcr.example.test/api/nextgent/installs/i1",
       "PATCH https://gcr.example.test/api/nextgent/installs/i1",
+      "PATCH https://gcr.example.test/api/nextgent/installs/i2",
     ]);
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ version: "1.1.0", app });
     expect(JSON.parse(String(calls[1].init.body))).toEqual({ enabled: false });
+    expect(JSON.parse(String(calls[2].init.body))).toEqual({ version: "2.0.0", layout });
     const headers = calls[0].init.headers as Record<string, string>;
     expect(headers["content-type"]).toBe("application/json");
     expect(

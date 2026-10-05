@@ -215,7 +215,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         await bridge.activate({ item, install: updated, version, userId, firstActivation: false, permissions: granted });
       } else {
         // Same scope: gcr-api-clean still learns the version and the manifest it carries.
-        await bridge.moveVersion(updated, version);
+        await bridge.moveVersion(item, updated, version);
       }
     } catch (err) {
       // gcr-api-clean kept the old scope (or the old version), so this side
