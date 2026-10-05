@@ -1,0 +1,17 @@
+# NEXT GENT integration branches
+
+The repaired source is pushed to `codex/nextgent-integration-20261005` in Plat-admin, gcr-api-clean, nextgent-ghost-image, nextgent-platform, Play-user, nextgent-openjarvis, nextgent-store and paperclip. Other repositories remain pinned to the verified existing commits in `integration/repositories.lock.json`.
+
+From the Paperclip integration branch, run `python3 nextgent-assembly/integration/bootstrap.py` with GitHub access configured. It creates `nextgent-assembly/repos/` with the exact existing directory names required by imports and file dependencies. It never overwrites dirty or differently pinned checkouts. This fetches source; it does not install dependencies, start services, change databases, or provision accounts.
+
+Use each repository's existing environment examples and install/build commands. Paperclip requires pnpm 9.15.4 and persistent PostgreSQL. Admin's Paperclip proxy uses PAPERCLIP_SERVER_URL; its business proxy uses GCR_API_URL. Both server URLs must be explicitly configured on the deployment. In development use PAPERCLIP_DEV_SERVER and GCR_API_DEV_SERVER.
+
+The live GCR database is cyber check, mkepugvdlktfsossumox. Read-only inspection found missing existing company-link, admin identity, Ghost idempotency and Stripe billing additions. Check prerequisites and apply the existing SQL in gcr-api-clean/sql/ORDER.md. No production migrations have been applied in this checkpoint.
+
+In the admin dashboard, existing Store publishing manages Paperclip apps, agents and automations. App Maps & box updates manages signed physical release artifacts using the existing GCR store. Create an item, publish the exact signed release JSON plus signature, name target business slugs, preview and deploy. Use an older published version with Update or roll back existing installs to roll back. Keep only one distinct installed signed whole-box plan per business; conflicting desired plans fail closed. New physical permissions require business owner acceptance.
+
+On the paired Linux box, use the existing Ghost installer and trusted signer setup. Install the separate release-sync service with scripts/install-release-sync.sh after ghost.env contains NEXTGENT_LINK_URL and NEXTGENT_NODE_TOKEN and trusted_signers is configured. The updater delegates to the existing pinned-commit assembler. It fetches releases when online and reports installer status. GHOST_RELEASE_RETRY=1 permits operator-requested retries of failed/interrupted installs; remove it after the retry. These instructions have not been proved on real hardware.
+
+Configure Jarvis with integration/configure_jarvis.py. Its NEXTGENT_DB_PATH must be the absolute database path shared with core/link. Provide the existing Paperclip company-scoped credentials, API address and source directory; the configuration helper preserves existing tool allowlists and refuses config overwrite.
+
+Before launch, provision NEXT GENT's own owner/admin workspace and workers; prove signup, billing, app installation/consent, per-business MCP boundaries, phone execution, independent verification and receipts using real deployed services. See VALIDATION.md for passing checks and unresolved Paperclip tests, legacy migration and hardware gates. A GitHub push is not production acceptance.

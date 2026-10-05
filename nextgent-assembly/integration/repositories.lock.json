@@ -1,0 +1,62 @@
+[
+  {
+    "repository": "CultureReset/Plat-admin",
+    "directory": "Plat-admin-main",
+    "commit": "9d6d31581387a88739ab06bb0d52b80a404fd9a4"
+  },
+  {
+    "repository": "CultureReset/nextgent-ghost-image",
+    "directory": "nextgent-ghost-image-main",
+    "commit": "8760f69a0ad89b7870eb4ba13d3c54908e956d01"
+  },
+  {
+    "repository": "CultureReset/nextgent-platform",
+    "directory": "nextgent-platform-main",
+    "commit": "a3106c77635330ca266fb5ea6ac5b8e67ddbbfcd"
+  },
+  {
+    "repository": "CultureReset/nextgent-maps",
+    "directory": "nextgent-maps-main",
+    "commit": "9637e5eec9bf1fb44d167e4dd5ac2c7be23a8e72"
+  },
+  {
+    "repository": "CultureReset/gcr-api-clean",
+    "directory": "gcr-api-clean",
+    "commit": "7a62a4fa225d067076a2c9b090bcadf6ff681ec5"
+  },
+  {
+    "repository": "CultureReset/Play-user",
+    "directory": "Play-user-main",
+    "commit": "ad84bf2c37f4c00683a0330715551d4a72f0c5cc"
+  },
+  {
+    "repository": "CultureReset/nextgent-openjarvis",
+    "directory": "nextgent-openjarvis-claude-repo-code-analysis-y4n1k7",
+    "commit": "4b84791c3c141706e810a2ca3937c410f2b0fb7f"
+  },
+  {
+    "repository": "CultureReset/nextgent-store",
+    "directory": "nextgent-store-codex-paperclip-service-activation",
+    "commit": "959d2074719ffe12f0d6c3249ee37e95fb5e9a8d"
+  },
+  {
+    "repository": "CultureReset/paperclip",
+    "directory": "paperclip-claude-agent-ecosystem-architecture-nzexu1",
+    "commit": "443989cb442fdb147cb2ce8e5b262db32dad0753"
+  },
+  {
+    "repository": "CultureReset/Boxes",
+    "directory": "Boxes-claude-agent-ecosystem-architecture-nzexu1",
+    "commit": "271a7cd7630a6000e8b4d24782a1dcee6af200ae"
+  },
+  {
+    "repository": "CultureReset/App-build-",
+    "directory": "App-build-",
+    "commit": "3b6eb1baa15c209e685a9086d54fd5a8d26b63a8"
+  },
+  {
+    "repository": "CultureReset/gcr-unified",
+    "directory": "gcr-unified-claude-agent-ecosystem-architecture-nzexu1",
+    "commit": "88d28d32a6191e2fff76bbc466370377c04f492e"
+  }
+]

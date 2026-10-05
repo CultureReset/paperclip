@@ -1,0 +1,283 @@
+{
+  "date": "2026-10-05",
+  "product": "NEXT GENT",
+  "blocks": [
+    {
+      "name": "paperclip",
+      "directory": "repos/paperclip-claude-agent-ecosystem-architecture-nzexu1",
+      "checks": [
+        [
+          "npx",
+          "--yes",
+          "pnpm@9.15.4",
+          "typecheck"
+        ],
+        [
+          "npx",
+          "--yes",
+          "pnpm@9.15.4",
+          "test:run"
+        ],
+        [
+          "npx",
+          "--yes",
+          "pnpm@9.15.4",
+          "build"
+        ]
+      ]
+    },
+    {
+      "name": "gcr-api",
+      "directory": "repos/gcr-api-clean",
+      "checks": [
+        [
+          "npm",
+          "run",
+          "verify"
+        ]
+      ]
+    },
+    {
+      "name": "app-engine",
+      "directory": "repos/App-build-",
+      "checks": [
+        [
+          "npm",
+          "test"
+        ],
+        [
+          "npm",
+          "run",
+          "typecheck"
+        ],
+        [
+          "npm",
+          "run",
+          "build"
+        ]
+      ]
+    },
+    {
+      "name": "platform",
+      "directory": "repos/nextgent-platform-main",
+      "checks": [
+        [
+          "{python}",
+          "-m",
+          "pytest"
+        ],
+        [
+          "{python}",
+          "-m",
+          "pytest",
+          "../../integration/test_relay_e2e.py"
+        ]
+      ]
+    },
+    {
+      "name": "maps",
+      "directory": "repos/nextgent-maps-main",
+      "checks": [
+        [
+          "{python}",
+          "-m",
+          "pytest"
+        ]
+      ]
+    },
+    {
+      "name": "jarvis",
+      "directory": "repos/nextgent-openjarvis-claude-repo-code-analysis-y4n1k7",
+      "checks": [
+        [
+          "{python}",
+          "-m",
+          "pytest",
+          "tests/core",
+          "tests/mcp",
+          "tests/cli/test_ask_e2e.py",
+          "tests/cli/test_serve_single_build.py",
+          "tests/cli/test_serve_tools.py",
+          "-q"
+        ]
+      ]
+    },
+    {
+      "name": "boxes",
+      "directory": "repos/Boxes-claude-agent-ecosystem-architecture-nzexu1",
+      "checks": [
+        [
+          "npm",
+          "run",
+          "typecheck"
+        ],
+        [
+          "npm",
+          "test"
+        ],
+        [
+          "npm",
+          "run",
+          "build"
+        ]
+      ]
+    },
+    {
+      "name": "admin",
+      "directory": "repos/Plat-admin-main",
+      "checks": [
+        [
+          "npm",
+          "run",
+          "verify"
+        ],
+        [
+          "npm",
+          "run",
+          "build"
+        ]
+      ]
+    },
+    {
+      "name": "user",
+      "directory": "repos/Play-user-main",
+      "checks": [
+        [
+          "npm",
+          "test"
+        ],
+        [
+          "npm",
+          "run",
+          "check"
+        ],
+        [
+          "npm",
+          "run",
+          "build"
+        ]
+      ]
+    },
+    {
+      "name": "gcr",
+      "directory": "repos/gcr-unified-claude-agent-ecosystem-architecture-nzexu1",
+      "checks": [
+        [
+          "npm",
+          "test"
+        ],
+        [
+          "npm",
+          "run",
+          "build"
+        ]
+      ]
+    },
+    {
+      "name": "legacy-store",
+      "directory": "repos/nextgent-store-codex-paperclip-service-activation",
+      "checks": [
+        [
+          "npm",
+          "test"
+        ]
+      ]
+    },
+    {
+      "name": "ghost-image",
+      "directory": "repos/nextgent-ghost-image-main",
+      "checks": [
+        [
+          "{python}",
+          "-m",
+          "unittest",
+          "discover",
+          "-s",
+          "tests",
+          "-v"
+        ]
+      ]
+    }
+  ],
+  "wiring": {
+    "paperclip_to_gcr": [
+      "GCR_API_URL",
+      "NEXTGENT_SERVICE_SECRET"
+    ],
+    "gcr_to_paperclip": [
+      "PAPERCLIP_API_URL",
+      "PAPERCLIP_ISSUER",
+      "PAPERCLIP_JWKS_URL",
+      "NEXTGENT_SERVICE_SECRET"
+    ],
+    "local_core": [
+      "NEXTGENT_DB_PATH",
+      "NEXTGENT_MAPS_DIR",
+      "NEXTGENT_POLICY_FILE",
+      "NEXTGENT_ANDROID_URL",
+      "NEXTGENT_ANDROID_TOKEN",
+      "NEXTGENT_CORE_TOKEN",
+      "NEXTGENT_OWNER_ID",
+      "NEXTGENT_OWNER_PHONE",
+      "NEXTGENT_DEVICE_ID"
+    ],
+    "local_link": [
+      "NEXTGENT_LINK_URL",
+      "NEXTGENT_NODE_TOKEN",
+      "NEXTGENT_CORE_URL",
+      "NEXTGENT_CORE_TOKEN"
+    ],
+    "boxes": [
+      "NEXTGENT_PAPERCLIP_URL",
+      "NEXTGENT_GCR_API_URL",
+      "NEXTGENT_ANDROID_URL",
+      "NEXTGENT_ANDROID_TOKEN",
+      "NEXTGENT_DEVICE_ID"
+    ],
+    "user_dev": [
+      "PAPERCLIP_DEV_SERVER",
+      "GCR_API_DEV_SERVER"
+    ],
+    "jarvis": [
+      "OPENJARVIS_CONFIG",
+      "tools.mcp.servers",
+      "NEXTGENT_OWNER_ID",
+      "NEXTGENT_DB_PATH",
+      "NEXTGENT_PYTHON",
+      "PAPERCLIP_SOURCE_DIR",
+      "PAPERCLIP_API_URL",
+      "PAPERCLIP_API_KEY",
+      "PAPERCLIP_COMPANY_ID"
+    ]
+  },
+  "wiring_examples": {
+    "local_link_base_url": "https://YOUR_GCR_API/api/nodes",
+    "maps_directory": "<assembly>/repos/nextgent-maps-main (catalog.yaml root)",
+    "core_url": "http://127.0.0.1:8764",
+    "android_url": "http://127.0.0.1:8765",
+    "paperclip_dev_url": "http://127.0.0.1:3100",
+    "gcr_api_dev_url": "http://127.0.0.1:3000",
+    "secrets": "Use separate local core/android credentials, GCR sealing/session keys, and the shared Paperclip/GCR service signing secret; never send local service tokens to the cloud relay.",
+    "shared_action_database": "One absolute NEXTGENT_DB_PATH shared by local core, link-side core access and Jarvis platform MCP"
+  },
+  "launch_scope": {
+    "billing": "existing Stripe implementation",
+    "release": "business software and physical Android together",
+    "first_business": "NEXT GENT founder business using customer installation paths",
+    "access": [
+      "business owner",
+      "platform administrator"
+    ],
+    "workers": [
+      "Jarvis",
+      "Hermes",
+      "OpenClaw"
+    ],
+    "app_maps": "admin-published independent versioned assets; bridge still required",
+    "gcr_documented_database": {
+      "name": "cyber check",
+      "project_ref": "mkepugvdlktfsossumox",
+      "live_identity_verified": false
+    }
+  }
+}
