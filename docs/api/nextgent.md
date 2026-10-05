@@ -188,9 +188,28 @@ A release payload may carry a `nextgent` section:
 each with a `reason` and optionally `optional: true` (the owner may decline it
 at install with `declinedPermissions: [...]`; a new optional permission never
 holds an update, it is simply not granted). An app release also carries its
-manifest as `payload.app`, kept whole.
+manifest as `payload.app`, kept whole; a layout release carries `payload.layout`
+(an object with at least `id` and `version`).
 `handoff` (automations only) names the agent work is given to, from this
 release or another installed item (`itemKey`).
+
+An `app` item's release passes a gate before it is stored (the full rule set is
+`@nextgent/app-engine` `validateManifest`; this is the minimum until that
+package installs here): `payload.nextgent.kind` is `"app"`, and `payload.app`
+is an object with `schema_version`, `id` equal to the item key, `version` equal
+to the release version (which must be semver), `runtime.type: "engine"`, a
+`ui` object and a `permissions` array. A refusal is `400` naming the field,
+e.g. `payload.app.runtime.type`.
+
+```
+GET /api/companies/{companyId}/store
+```
+
+Each listing carries, beyond the item and update fields: `installId` (the
+`store_installs` row, null before install), `installEnabled`, `versionId` (the
+installed release, or the latest on the channel), `app` (that release's
+manifest for an `app` item, null for other kinds), `price` (`{ amountCents,
+currency, interval, model }` or null) and `approvedPermissions`.
 
 ```
 GET /api/companies/{companyId}/store/{itemId}/consent
@@ -209,7 +228,10 @@ reason, `changesThings` for write/send), `allowed`, `reason`, and
    webhook trigger (`signingMode: "hmac_sha256"`) — needs `PAPERCLIP_API_URL`
    or a public origin for the webhook URL;
 4. calls `POST /api/nextgent/installs` with the release's permissions (and
-   the routine's `webhookUrl`/`webhookSecret`);
+   the routine's `webhookUrl`/`webhookSecret`), the manifest as `app` and the
+   install's `enabled` switch. An `app` or `layout` item is registered even
+   when its release has no NEXT GENT section, so gcr-api-clean can project it
+   into the business's page;
 5. stores a returned token as a company secret and binds it to the install's
    agents in the business-data plugin, so those agents act with only what was
    approved.
@@ -235,14 +257,22 @@ POST /api/companies/{companyId}/store/{itemId}/enable
 
 Owners and admins. Turns on an install an admin pushed switched off: plan
 check, content, registration with gcr-api-clean (`declinedPermissions`
-optional). This is the owner's consent.
+optional), then `PATCH /api/nextgent/installs/{installId}` with
+`{ enabled: true }`. This is the owner's consent.
+
+A version move that changes no permissions (an automatic update, a push, an
+owner's update) is sent to gcr-api-clean as
+`PATCH /api/nextgent/installs/{installId}` with `{ version, app }`, so an
+app's projection follows the release. One that changes permissions
+re-registers with `POST /api/nextgent/installs` as before.
 
 Agents an install creates carry `metadata.storeItemKey`, `metadata.installId`
 and `metadata.storeItem` (`itemId`, `itemKey`, `resourceKey`), so apps can tie
 an agent to its store item without matching names.
 
-Uninstall calls `DELETE /api/nextgent/installs/{installId}` first, then removes
-the content and the token secret.
+Uninstall calls `DELETE /api/nextgent/installs/{installId}` first (gcr-api-clean
+switches an app's projection off and keeps its data), then removes the content
+and the token secret.
 
 A new release asking for permissions an install has not approved never applies
 on its own, not even a required security release: the listing shows
@@ -260,7 +290,7 @@ registration are skipped with a warning (dev only).
 Instance admins only.
 
 - `GET /api/store/admin/meta` — `kinds` (`plugin`, `pack`, `skill`,
-  `automation`, `connector`, `agent`, `app`, `box-release`; the database
+  `automation`, `connector`, `agent`, `app`, `layout`; the database
   constraint), `channels`, `advisoryTypes`, `approvalModes`,
   `forceableAdvisory`, `actions` (`apply`, `force` with `force: true`),
   `audienceModes` (`all`; `companies` with `needs: "companies"`; `channel`
@@ -295,6 +325,6 @@ Instance admins only.
   install charges read; only then stored on the item (`price` in
   `GET /api/store/admin/items`). Without a currency, `NEXTGENT_STORE_CURRENCY`
   is used; with neither, `422`.
-- A `box-release` item's release payload is `{ plan, signature }` (a signed
-  nextgent-ghost-image plan); a release without a signature is refused. It
-  puts nothing inside a company; the computers verify the signature.
+- A `layout` item's release payload carries `layout` (an object with at least
+  `id` and `version`); a release without it is refused. It puts nothing inside
+  a company; like an app it is registered with gcr-api-clean on install.

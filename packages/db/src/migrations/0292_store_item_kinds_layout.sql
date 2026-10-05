@@ -1,0 +1,2 @@
+ALTER TABLE "store_items" DROP CONSTRAINT "store_items_kind_check";--> statement-breakpoint
+ALTER TABLE "store_items" ADD CONSTRAINT "store_items_kind_check" CHECK ("store_items"."kind" IN ('plugin', 'pack', 'skill', 'automation', 'connector', 'agent', 'app', 'layout'));

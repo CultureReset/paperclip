@@ -6,8 +6,9 @@ import { badRequest, conflict, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { readNextgentConfig } from "./nextgent-config.js";
 import { pluginRegistryService } from "./plugin-registry.js";
-import { parseStorePayload, storeContentService, storeNextgentSectionSchema } from "./store-content.js";
+import { assertAppManifest, parseStorePayload, storeContentService, storeNextgentSectionSchema } from "./store-content.js";
 import {
+  appManifestOf,
   describePermissions,
   newPermissions,
   permissionsOf,
@@ -21,7 +22,7 @@ import {
 import { MENU_CATALOG, menuFromPayload } from "./store-menu.js";
 
 /** Mirrors the store_items_kind_check constraint (packages/db/src/schema/store.ts). */
-export const STORE_ITEM_KINDS = ["plugin", "pack", "skill", "automation", "connector", "agent", "app", "box-release"] as const;
+export const STORE_ITEM_KINDS = ["plugin", "pack", "skill", "automation", "connector", "agent", "app", "layout"] as const;
 export type StoreItemKind = (typeof STORE_ITEM_KINDS)[number];
 export const STORE_CHANNELS = ["stable", "fast"] as const;
 export type StoreChannel = (typeof STORE_CHANNELS)[number];
@@ -42,19 +43,6 @@ function parsePluginPayload(payload: Record<string, unknown> | undefined): Recor
     return { ...value, nextgent: parsed.data };
   }
   return value;
-}
-
-/**
- * A box-release is a signed nextgent-ghost-image plan: `plan` (ghost.json)
- * and its detached `signature`. The computers verify the signature; the
- * store only refuses a release that has none.
- */
-function parseBoxReleasePayload(payload: Record<string, unknown> | undefined): Record<string, unknown> {
-  const value = payload ?? {};
-  const plan = value.plan;
-  if (!plan || typeof plan !== "object" || Array.isArray(plan)) throw badRequest("A box-release needs its plan (ghost.json) as an object");
-  if (typeof value.signature !== "string" || !value.signature.trim()) throw badRequest("A box-release needs its signature");
-  return { plan, signature: value.signature.trim() };
 }
 
 function priceOf(item: StoreItemRow) {
@@ -221,16 +209,21 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
     if (!install.enabled) return updated;
     const section = nextgentSectionOf(version.payload);
     const granted = carriedGrant(install.approvedPermissions, section);
-    if (section ? !samePermissions(install.approvedPermissions, granted) : install.approvedPermissions !== null) {
-      try {
+    const scopeChanged = section ? !samePermissions(install.approvedPermissions, granted) : install.approvedPermissions !== null && install.approvedPermissions.length > 0;
+    try {
+      if (scopeChanged) {
         await bridge.activate({ item, install: updated, version, userId, firstActivation: false, permissions: granted });
-      } catch (err) {
-        // gcr-api-clean kept the old scope, so this side goes back to the old
-        // release too: version, grants and content. The install then still
-        // shows the update as available, and the owner retries it explicitly.
-        await rollBackMove(item, install, userId);
-        throw err;
+      } else {
+        // Same scope: gcr-api-clean still learns the version and the manifest it carries.
+        await bridge.moveVersion(updated, version);
       }
+    } catch (err) {
+      // gcr-api-clean kept the old scope (or the old version), so this side
+      // goes back to the old release too: version, grants and content. The
+      // install then still shows the update as available, and the owner
+      // retries it explicitly.
+      await rollBackMove(item, install, userId);
+      throw err;
     }
     return updated;
   }
@@ -408,15 +401,14 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
       const advisoryType = input.advisoryType ?? "enhancement";
       const required = input.required ?? false;
       if (required && advisoryType !== "security") throw badRequest("Only security advisories can be required");
-      const payload =
-        item.kind === "plugin"
-          ? parsePluginPayload(input.payload)
-          : item.kind === "box-release"
-            ? parseBoxReleasePayload(input.payload)
-            : parseStorePayload(input.payload);
+      const payload = item.kind === "plugin" ? parsePluginPayload(input.payload) : parseStorePayload(input.payload);
       const declared = nextgentSectionOf(payload);
       if (declared && (item.kind === "agent" || item.kind === "app" || item.kind === "automation") && declared.kind !== item.kind) {
         throw badRequest(`A ${item.kind} item's release must declare nextgent.kind "${item.kind}"`);
+      }
+      if (item.kind === "app") assertAppManifest(payload, item, input.version);
+      if (item.kind === "layout" && !payload.layout) {
+        throw badRequest("Release content is not valid: payload.layout must be the layout object (id, version)");
       }
       const version = await db.transaction(async (tx) => {
         const existing = await tx
@@ -528,6 +520,8 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         const updateAvailable = install !== null && latest !== null && install.versionId !== latest.id;
         const updateNewPermissions = updateAvailable && latest ? newPermissions(install?.approvedPermissions, nextgentSectionOf(latest.payload)) : [];
         const shown = (current ?? latest)?.payload as Record<string, unknown[] | undefined> | undefined;
+        // What the screen that draws an app needs: the installed release's manifest, or the latest one's before install.
+        const app = item.kind === "app" ? appManifestOf((current ?? latest)?.payload) : null;
         const contents = {
           skills: shown?.skills?.length ?? 0,
           agents: shown?.agents?.length ?? 0,
@@ -558,6 +552,14 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
           updateNewPermissions,
           needsAccessTo: describePermissions(nextgentSectionOf((current ?? latest)?.payload)),
           contents,
+          /** The store_installs row (null before install), for the install token and the app's screens. */
+          installId: install?.id ?? null,
+          installEnabled: install ? install.enabled : null,
+          /** The release shown: the installed one, or the latest on the channel. */
+          versionId: (current ?? latest)?.id ?? null,
+          app,
+          price: priceOf(item),
+          approvedPermissions: install?.approvedPermissions ?? [],
         };
       });
     },
@@ -700,7 +702,8 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
             if (entry.enabled) {
               await bridge.assertEntitled(entry.companyId, item.key);
               await bringUp(item, created, version, userId, []);
-              await db.update(storeInstalls).set({ enabled: true, updatedAt: new Date() }).where(eq(storeInstalls.id, created.id));
+              const [on] = await db.update(storeInstalls).set({ enabled: true, updatedAt: new Date() }).where(eq(storeInstalls.id, created.id)).returning();
+              await bridge.setEnabled(on, true);
             }
           }
         } catch {
@@ -800,6 +803,8 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         .set({ enabled: true, versionId: version.id, updatedAt: new Date() })
         .where(eq(storeInstalls.id, install.id))
         .returning();
+      // Registered as it was (switched off); now the projection is switched on with it.
+      await bridge.setEnabled(enabled, true);
       return { ...enabled, charge, charged: activation?.charged ?? false };
     },
 

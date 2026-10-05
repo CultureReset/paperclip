@@ -39,7 +39,7 @@ export const storeItems = pgTable(
     statusIdx: index("store_items_status_idx").on(table.status),
     kindCheck: check(
       "store_items_kind_check",
-      sql`${table.kind} IN ('plugin', 'pack', 'skill', 'automation', 'connector', 'agent', 'app', 'box-release')`,
+      sql`${table.kind} IN ('plugin', 'pack', 'skill', 'automation', 'connector', 'agent', 'app', 'layout')`,
     ),
     statusCheck: check("store_items_status_check", sql`${table.status} IN ('draft', 'published', 'retired')`),
     pluginKeyCheck: check(

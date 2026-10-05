@@ -315,6 +315,7 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
         version: "1.0.0",
         permissions: ["availability:read"],
         optionalPermissions: [],
+        enabled: true,
       });
 
       const [booker] = await db.select().from(agents).where(eq(agents.companyId, companyId));
@@ -445,15 +446,17 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       const { calls, fetch } = fakeUpstream({
         "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
         "POST /api/nextgent/installs": () => ({ body: { token: `token-${calls.length}` } }),
+        "PATCH /api/nextgent/installs/:id": () => ({ body: { updated: true } }),
       });
       const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
       const item = await publish(store, "booker", "pack", agentRelease);
-      await store.install(companyId, item.id, null);
+      const installed = await store.install(companyId, item.id, null);
 
-      // Same permissions: applies automatically, no new token needed.
+      // Same permissions: applies automatically, no new token needed; gcr-api-clean is told the new version.
       const same = await store.addVersion(item.id, { version: "1.1.0", payload: agentRelease }, null);
       expect(same).toMatchObject({ appliedTo: 1, needsApprovalFor: [] });
       expect(calls.filter((call) => call.method === "POST")).toHaveLength(1);
+      expect(calls.at(-1)).toMatchObject({ method: "PATCH", url: `${GCR}/api/nextgent/installs/${installed.id}`, body: { version: "1.1.0" } });
 
       const wider = {
         ...agentRelease,
@@ -517,6 +520,7 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       const { calls, fetch } = fakeUpstream({
         "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
         "POST /api/nextgent/installs": (body) => ({ body: body?.kind === "automation" ? {} : { token: "agent-token" } }),
+        "PATCH /api/nextgent/installs/:id": () => ({ body: { updated: true } }),
         "DELETE /api/nextgent/installs/:id": () => ({ body: {} }),
       });
       const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
@@ -635,15 +639,29 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       expect(await db.select().from(agents).where(eq(agents.companyId, companyId))).toHaveLength(1);
     });
 
+    /** An engine manifest the store's gate accepts (store-content.ts assertAppManifest). */
+    const engineManifest = (id: string, version: string, extra: Record<string, unknown> = {}) => ({
+      schema_version: 1,
+      id,
+      name: "Menu",
+      version,
+      publisher: "NEXT GENT",
+      runtime: { type: "engine" },
+      ui: { views: {} },
+      permissions: [],
+      ...extra,
+    });
+
     it("keeps an app's manifest and lets the owner decline optional access", async () => {
       const companyId = await seedCompany("APP");
       const { calls, fetch } = fakeUpstream({
         "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
         "POST /api/nextgent/installs": () => ({ body: { token: "app-token" } }),
+        "PATCH /api/nextgent/installs/:id": () => ({ body: { updated: true, projected: true } }),
       });
       const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
       const item = await store.create({ key: "menu-app", kind: "app", name: "Menu" }, null);
-      const manifest = { id: "menu-app", name: "Menu", version: "1.0.0", ui: { views: {} } };
+      const manifest = engineManifest("menu-app", "1.0.0");
       const { version } = await store.addVersion(item.id, {
         version: "1.0.0",
         payload: {
@@ -663,14 +681,138 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       expect(consent.needsAccessTo.map((entry) => [entry.permission, entry.optional])).toEqual([["menu:read", false], ["reviews:read", true]]);
       const install = await store.install(companyId, item.id, null, { declinedPermissions: ["reviews:read"] });
       expect(install.approvedPermissions).toEqual(["menu:read"]);
-      expect(calls.find((call) => call.method === "POST")?.body).toMatchObject({ permissions: ["menu:read"], optionalPermissions: [] });
+      // The projection gcr-api-clean keeps gets the manifest and the switch state with the install.
+      expect(calls.find((call) => call.method === "POST")?.body).toEqual({
+        companyId,
+        installId: install.id,
+        itemKey: "menu-app",
+        kind: "app",
+        version: "1.0.0",
+        permissions: ["menu:read"],
+        optionalPermissions: [],
+        app: manifest,
+        enabled: true,
+      });
+
+      // The listing carries what the screen that draws the app needs.
+      const [listed] = await store.listForCompany(companyId);
+      expect(listed).toMatchObject({
+        installId: install.id,
+        installEnabled: true,
+        versionId: version.id,
+        app: manifest,
+        price: null,
+        approvedPermissions: ["menu:read"],
+      });
 
       // A new optional permission never holds an update; a new required one does.
       const next = await store.addVersion(item.id, {
         version: "1.1.0",
-        payload: { app: manifest, nextgent: { kind: "app", permissions: [{ permission: "menu:read", reason: "Show the menu" }, { permission: "events:read", reason: "x", optional: true }] } },
+        payload: { app: engineManifest("menu-app", "1.1.0"), nextgent: { kind: "app", permissions: [{ permission: "menu:read", reason: "Show the menu" }, { permission: "events:read", reason: "x", optional: true }] } },
       }, null);
       expect(next).toMatchObject({ appliedTo: 1, needsApprovalFor: [] });
+      // Same permissions, so no re-registration: the version move goes to gcr-api-clean as a PATCH with the new manifest.
+      expect(calls.at(-1)).toMatchObject({
+        method: "PATCH",
+        url: `${GCR}/api/nextgent/installs/${install.id}`,
+        body: { version: "1.1.0", app: engineManifest("menu-app", "1.1.0") },
+      });
+      expect((await store.listForCompany(companyId))[0]).toMatchObject({ app: engineManifest("menu-app", "1.1.0"), versionId: next.version.id });
+    });
+
+    it("refuses an app release whose manifest fails the gate, naming the field", async () => {
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      const item = await store.create({ key: "menu-app", kind: "app", name: "Menu" }, null);
+      const release = (app: unknown, nextgent: unknown = { kind: "app", permissions: [] }) =>
+        store.addVersion(item.id, { version: "1.0.0", payload: { app, nextgent } }, null);
+      await expect(release(undefined)).rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.app") });
+      await expect(release(engineManifest("other-key", "1.0.0"))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.app.id") });
+      await expect(release(engineManifest("menu-app", "1.0.1"))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.app.version") });
+      await expect(release(engineManifest("menu-app", "1.0.0", { runtime: { type: "node" } }))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.app.runtime.type") });
+      await expect(release(engineManifest("menu-app", "1.0.0", { ui: null }))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.app.ui") });
+      await expect(release(engineManifest("menu-app", "1.0.0", { permissions: {} }))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.app.permissions") });
+      await expect(release({ ...engineManifest("menu-app", "1.0.0"), schema_version: undefined })).rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.app.schema_version") });
+      await expect(release(engineManifest("menu-app", "1.0.0"), null)).rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.nextgent.kind") });
+      const notSemver = await store.create({ key: "loose", kind: "app", name: "Loose" }, null);
+      await expect(store.addVersion(notSemver.id, { version: "v1", payload: { app: engineManifest("loose", "v1"), nextgent: { kind: "app" } } }, null))
+        .rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.app.version") });
+      await release(engineManifest("menu-app", "1.0.0"));
+    });
+
+    it("registers an app with gcr-api-clean even without a NEXT GENT section, and tells it when the owner turns a pushed install on", async () => {
+      const companyId = await seedCompany("APN");
+      const { calls, fetch } = fakeUpstream({
+        "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
+        "POST /api/nextgent/installs": () => ({ body: { token: "app-token" } }),
+        "PATCH /api/nextgent/installs/:id": () => ({ body: { updated: true, projected: true } }),
+        "DELETE /api/nextgent/installs/:id": () => ({ body: { removed: true } }),
+      });
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
+      const item = await store.create({ key: "hours", kind: "app", name: "Hours" }, null);
+      const manifest = engineManifest("hours", "1.0.0");
+      await store.addVersion(item.id, { version: "1.0.0", payload: { app: manifest, nextgent: { kind: "app" } } }, null);
+      await store.publish(item.id);
+
+      // Pushed switched off: nothing is registered yet.
+      await store.deploy(item.id, { version: "1.0.0", action: "apply", audience: { mode: "companies", companyIds: [companyId] }, installMissing: true }, "admin");
+      expect(calls.filter((call) => call.method === "POST")).toHaveLength(0);
+      const [listedOff] = await store.listForCompany(companyId);
+      expect(listedOff).toMatchObject({ installed: true, installEnabled: false, app: manifest });
+
+      // The owner turns it on: registered (no permissions to grant), then switched on in the projection.
+      const on = await store.enable(companyId, item.id, "owner-APN");
+      expect(on.approvedPermissions).toEqual([]);
+      const registered = calls.find((call) => call.method === "POST")!;
+      expect(registered.body).toMatchObject({ installId: on.id, kind: "app", version: "1.0.0", permissions: [], app: manifest });
+      expect(calls.at(-1)).toMatchObject({ method: "PATCH", url: `${GCR}/api/nextgent/installs/${on.id}`, body: { enabled: true } });
+      expect((await store.listForCompany(companyId))[0]).toMatchObject({ installEnabled: true, approvedPermissions: [] });
+
+      // Uninstall still tells gcr-api-clean with DELETE (it switches the projection off and keeps the app's data).
+      await store.uninstall(companyId, item.id, null);
+      expect(calls.at(-1)).toMatchObject({ method: "DELETE", url: `${GCR}/api/nextgent/installs/${on.id}` });
+    });
+
+    it("installs a layout the same way and never shows it as an app", async () => {
+      const companyId = await seedCompany("LAY");
+      const { calls, fetch } = fakeUpstream({
+        "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
+        "POST /api/nextgent/installs": () => ({ body: {} }),
+      });
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
+      const item = await store.create({ key: "front-page", kind: "layout", name: "Front page" }, null);
+      await expect(store.addVersion(item.id, { version: "1.0.0", payload: {} }, null)).rejects.toMatchObject({ status: 400, message: expect.stringContaining("payload.layout") });
+      await expect(store.addVersion(item.id, { version: "1.0.0", payload: { layout: { id: "front-page" } } }, null)).rejects.toMatchObject({ status: 400 });
+      const layout = { id: "front-page", version: "1.0.0", slots: ["hero"] };
+      const { version } = await store.addVersion(item.id, { version: "1.0.0", payload: { layout } }, null);
+      expect((version.payload as Record<string, unknown>).layout).toEqual(layout);
+      await store.publish(item.id);
+      const install = await store.install(companyId, item.id, null);
+      expect(calls.find((call) => call.method === "POST")?.body).toEqual({
+        companyId,
+        installId: install.id,
+        itemKey: "front-page",
+        kind: "layout",
+        version: "1.0.0",
+        permissions: [],
+        optionalPermissions: [],
+        enabled: true,
+      });
+      const [listed] = await store.listForCompany(companyId);
+      expect(listed).toMatchObject({ kind: "layout", installId: install.id, app: null, approvedPermissions: [] });
+    });
+
+    it("shows an item's price and the install's version id in the company listing", async () => {
+      const companyId = await seedCompany("PRC");
+      const { fetch } = fakeUpstream({
+        "PUT /api/nextgent/items/paid/price": (body) => ({ body: { itemKey: "paid", ...body } }),
+      });
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }), defaultCurrency: "usd" });
+      const item = await store.create({ key: "paid", kind: "pack", name: "Paid" }, null);
+      const { version } = await store.addVersion(item.id, { version: "1.0.0", payload: plainRelease }, null);
+      await store.setPrice(item.id, { amountCents: 1200, interval: "month", model: "flat" });
+      await store.publish(item.id);
+      const [before] = await store.listForCompany(companyId);
+      expect(before).toMatchObject({ installId: null, installEnabled: null, versionId: version.id, app: null, approvedPermissions: [], price: { amountCents: 1200, currency: "usd", interval: "month", model: "flat" } });
     });
 
     it("never pushes new data access, even forced", async () => {
@@ -694,15 +836,13 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       await expect(store.addVersion(item.id, { version: "1", payload: { nextgent: { kind: "automation" } } }, null)).rejects.toMatchObject({ status: 400 });
     });
 
-    it("accepts signed box releases and refuses unsigned ones", async () => {
+    it("refuses the retired box-release kind and accepts layout", async () => {
       const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
-      const item = await store.create({ key: "box", kind: "box-release", name: "Box" }, null);
-      await expect(store.addVersion(item.id, { version: "1", payload: { plan: { modules: [] } } }, null)).rejects.toMatchObject({ status: 400 });
-      const { version } = await store.addVersion(item.id, { version: "1", payload: { plan: { modules: [] }, signature: "-----BEGIN SSH SIGNATURE-----" } }, null);
-      expect(version.payload).toEqual({ plan: { modules: [] }, signature: "-----BEGIN SSH SIGNATURE-----" });
-      await store.publish(item.id);
-      const companyId = await seedCompany("BOX");
-      await store.install(companyId, item.id, null);
+      // The database constraint no longer lists it.
+      await expect(store.create({ key: "box", kind: "box-release" as never, name: "Box" }, null)).rejects.toBeTruthy();
+      expect(await store.listAll()).toEqual([]);
+      const layout = await store.create({ key: "front-page", kind: "layout", name: "Front page" }, null);
+      expect(layout.kind).toBe("layout");
     });
 
     it("forwards a price to gcr-api-clean billing before showing it", async () => {

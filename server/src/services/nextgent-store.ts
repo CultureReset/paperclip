@@ -29,6 +29,28 @@ export const HANDOFF_ROUTINE_KEY = `${PLATFORM_RESOURCE_KEY_PREFIX}nextgent-hand
 /** Actions that change things or reach people get the warning badge on the consent screen. */
 const CHANGING_ACTIONS = new Set(["write", "send"]);
 
+/**
+ * Kinds gcr-api-clean projects into the business whether or not the release
+ * declares a NEXT GENT section (Step 3 contract §A): their install is always
+ * registered, and every version move and switch is sent on.
+ */
+const PROJECTED_KINDS = new Set(["app", "layout"]);
+export function isProjectedKind(kind: string) {
+  return PROJECTED_KINDS.has(kind);
+}
+
+/** The release's app manifest (`payload.app`) when it carries one. */
+export function appManifestOf(payload: unknown): Record<string, unknown> | null {
+  if (!payload || typeof payload !== "object") return null;
+  const app = (payload as Record<string, unknown>).app;
+  return app && typeof app === "object" && !Array.isArray(app) ? (app as Record<string, unknown>) : null;
+}
+
+/** Whether gcr-api-clean has been told about this install (it was activated at least once). */
+export function registeredUpstream(install: { approvedPermissions: unknown; tokenSecretId: string | null }) {
+  return install.approvedPermissions !== null || install.tokenSecretId !== null;
+}
+
 /** The release's NEXT GENT section, or null when it declares none (or is not valid). */
 export function nextgentSectionOf(payload: unknown): StoreNextgentSection | null {
   if (!payload || typeof payload !== "object") return null;
@@ -271,30 +293,38 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
       permissions: string[];
     }) {
       const section = nextgentSectionOf(input.version.payload);
+      // An app or a layout is registered even without a section: gcr-api-clean
+      // keeps its projection (the manifest, the switch) for the business's page.
+      const projected = isProjectedKind(input.item.kind);
+      const registered = section !== null || projected;
       const permissions = sorted(input.permissions);
       const optionalGranted = optionalPermissionsOf(section).filter((permission) => permissions.includes(permission));
       await db
         .update(storeInstalls)
-        .set({ approvedPermissions: section ? permissions : null, updatedAt: new Date() })
+        .set({ approvedPermissions: registered ? permissions : null, updatedAt: new Date() })
         .where(eq(storeInstalls.id, input.install.id));
-      if (!section) return null;
+      if (!registered) return null;
       if (!gcr.configured) {
         warnSkipped("install registration", { companyId: input.install.companyId, itemKey: input.item.key });
         return null;
       }
-      const routine = input.firstActivation ? await createHandoffRoutine(input.install.companyId, input.item, section, input.userId) : null;
+      const kind = section?.kind ?? (input.item.kind as "app" | "layout");
+      const routine = input.firstActivation && section ? await createHandoffRoutine(input.install.companyId, input.item, section, input.userId) : null;
+      const app = appManifestOf(input.version.payload);
       const result = await gcr.install({
         companyId: input.install.companyId,
         installId: input.install.id,
         itemKey: input.item.key,
-        kind: section.kind,
+        kind,
         version: input.version.version,
         permissions,
         // Which of those the owner could have declined; gcr-api-clean may ignore it.
         optionalPermissions: optionalGranted,
         ...(routine ? { routine } : {}),
+        ...(app ? { app } : {}),
+        enabled: input.install.enabled,
       });
-      if (typeof result?.token === "string" && result.token && section.kind !== "automation") {
+      if (typeof result?.token === "string" && result.token && kind !== "automation") {
         await storeInstallToken(input.install, result.token, input.userId);
       }
       // Rewritten with or without a token: an agent whose install got none is
@@ -308,15 +338,43 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
         action: "nextgent.install_authorized",
         entityType: "store_item",
         entityId: input.item.id,
-        details: { itemKey: input.item.key, kind: section.kind, version: input.version.version, permissions },
+        details: { itemKey: input.item.key, kind, version: input.version.version, permissions },
       });
       return { charged: result?.charged === true };
     },
 
-    /** Uninstall: gcr-api-clean revokes the token and disables the automation first. */
+    /**
+     * A version move that changes no permissions: gcr-api-clean is told the new
+     * version and the manifest it carries (`PATCH`), so an app's projection
+     * follows the release. Nothing to tell for an install it never got.
+     */
+    async moveVersion(install: InstallRow, version: VersionRow) {
+      if (!registeredUpstream(install)) return null;
+      if (!gcr.configured) {
+        warnSkipped("install version update", { companyId: install.companyId, installId: install.id });
+        return null;
+      }
+      const app = appManifestOf(version.payload);
+      return gcr.patchInstall(install.id, { version: version.version, ...(app ? { app } : {}) });
+    },
+
+    /** The owner's switch: gcr-api-clean's projection is turned on or off with it (`PATCH { enabled }`). */
+    async setEnabled(install: InstallRow, enabled: boolean) {
+      if (!registeredUpstream(install)) return null;
+      if (!gcr.configured) {
+        warnSkipped("install switch", { companyId: install.companyId, installId: install.id });
+        return null;
+      }
+      return gcr.patchInstall(install.id, { enabled });
+    },
+
+    /**
+     * Uninstall: gcr-api-clean revokes the token and disables the automation
+     * first. For an app it switches the projection off and keeps the app's
+     * data (DECISIONS #22); the `DELETE` keeps that meaning.
+     */
     async deactivate(install: InstallRow) {
-      const registered = install.approvedPermissions !== null || install.tokenSecretId !== null;
-      if (registered) {
+      if (registeredUpstream(install)) {
         if (gcr.configured) {
           try {
             await gcr.uninstall(install.id);

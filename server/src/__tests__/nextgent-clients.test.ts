@@ -85,6 +85,31 @@ describe("gcr-api-clean client (contract §4)", () => {
     expect(signed(2, "GET", "/api/nextgent/entitlement", "")).toEqual({ ok: false, reason: "mismatch" });
   });
 
+  it("patches an install's switch, version and manifest at the contract path, signed like the others", async () => {
+    const { calls, fetch } = recordingFetch({ body: { updated: true, projected: true } });
+    const client = gcrClient({ config, fetch });
+    const app = { schema_version: 1, id: "k", version: "1.1.0", runtime: { type: "engine" }, ui: {}, permissions: [] };
+    expect(await client.patchInstall("i1", { version: "1.1.0", app })).toEqual({ updated: true, projected: true });
+    await client.patchInstall("i1", { enabled: false });
+    expect(calls.map((c) => `${c.init.method} ${c.url}`)).toEqual([
+      "PATCH https://gcr.example.test/api/nextgent/installs/i1",
+      "PATCH https://gcr.example.test/api/nextgent/installs/i1",
+    ]);
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ version: "1.1.0", app });
+    expect(JSON.parse(String(calls[1].init.body))).toEqual({ enabled: false });
+    const headers = calls[0].init.headers as Record<string, string>;
+    expect(headers["content-type"]).toBe("application/json");
+    expect(
+      verifyNextgentSignature({
+        secret: "s3cret",
+        request: { method: "PATCH", pathname: "/api/nextgent/installs/i1", query: "", rawBody: String(calls[0].init.body) },
+        timestamp: headers["x-nextgent-timestamp"],
+        nonce: headers["x-nextgent-nonce"],
+        signature: headers["x-nextgent-signature"],
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it("passes client errors through and maps server errors to 502", async () => {
     const notClaimed = gcrClient({ config, fetch: recordingFetch({ status: 409, body: { error: "Business is not claimed" } }).fetch });
     await expect(notClaimed.link({ companyId: "c1", entitySlug: "x" })).rejects.toMatchObject({ status: 409, message: "Business is not claimed" });

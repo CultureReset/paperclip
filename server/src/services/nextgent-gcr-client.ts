@@ -9,7 +9,8 @@ import { signNextgentRequest, splitRequestUrl } from "./nextgent-service-signing
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
-export type NextgentInstallKind = "agent" | "app" | "automation";
+/** The kinds gcr-api-clean is told about: the NEXT GENT section's, or the item's for an app or a layout. */
+export type NextgentInstallKind = "agent" | "app" | "automation" | "layout";
 
 export interface GcrLinkRequest {
   companyId: string;
@@ -42,6 +43,17 @@ export interface GcrInstallRequest {
   /** The optional ones among `permissions` (granted, could have been declined). Not in contract §4. */
   optionalPermissions?: string[];
   routine?: { webhookUrl: string; webhookSecret: string };
+  /** An app's manifest (the release's `payload.app`), projected into the business (Step 3 contract §A). */
+  app?: Record<string, unknown>;
+  /** Whether the install is switched on; a pushed install starts off until the owner turns it on. */
+  enabled?: boolean;
+}
+
+/** `PATCH /api/nextgent/installs/:id`: the switch, a version move, the manifest that version carries. */
+export interface GcrInstallPatch {
+  enabled?: boolean;
+  version?: string;
+  app?: Record<string, unknown>;
 }
 
 export interface GcrEntitlement {
@@ -72,7 +84,7 @@ export function gcrClient(options: { config?: NextgentConfig; fetch?: FetchLike 
   const config = options.config ?? readNextgentConfig();
   const doFetch: FetchLike = options.fetch ?? ((url, init) => fetch(url, init));
 
-  async function call<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown): Promise<T> {
+  async function call<T>(method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
     if (!gcrConfigured(config)) throw new GcrNotConfiguredError();
     const rawBody = body === undefined ? "" : JSON.stringify(body);
     const url = `${config.gcrApiUrl}${path}`;
@@ -128,6 +140,10 @@ export function gcrClient(options: { config?: NextgentConfig; fetch?: FetchLike 
         "/api/nextgent/installs",
         input,
       ),
+    /** Switch an install on or off, or move it to a version (with that version's manifest) without re-registering it. */
+    patchInstall: (installId: string, patch: GcrInstallPatch) =>
+      call<{ updated?: boolean; projected?: boolean }>("PATCH", `/api/nextgent/installs/${encodeURIComponent(installId)}`, patch),
+    /** gcr-api-clean switches the projection off and keeps the app's data (DECISIONS #22). */
     uninstall: (installId: string) =>
       call<Record<string, unknown>>("DELETE", `/api/nextgent/installs/${encodeURIComponent(installId)}`),
     /**

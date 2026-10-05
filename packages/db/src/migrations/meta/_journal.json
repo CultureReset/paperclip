@@ -2031,6 +2031,13 @@
       "when": 1791149542497,
       "tag": "0291_secret_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 292,
+      "version": "7",
+      "when": 1791157696153,
+      "tag": "0292_store_item_kinds_layout",
+      "breakpoints": true
     }
   ]
 }

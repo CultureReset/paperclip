@@ -52,8 +52,13 @@ export type StoreNextgentSection = z.infer<typeof storeNextgentSectionSchema>;
 export const storePayloadSchema = z
   .object({
     nextgent: storeNextgentSectionSchema.nullish(),
-    /** An app's manifest (App-build- engine), kept whole for the screens that draw it. */
+    /** An app's manifest (App-build- engine), kept whole for the screens that draw it; gated by assertAppManifest. */
     app: z.record(z.string(), z.unknown()).nullish(),
+    /** A layout: which screens a business's page is built from. Kept whole; only its identity is checked here. */
+    layout: z
+      .object({ id: z.string().trim().min(1), version: z.string().trim().min(1) })
+      .passthrough()
+      .nullish(),
     /** Menu entries this item turns on, beyond the ones its agents, routines and skills need. */
     menu: z.array(z.enum(MENU_KEYS)).default([]),
     skills: z
@@ -133,6 +138,35 @@ export function parseStorePayload(payload: unknown): StorePayload {
   return parsed.data;
 }
 
+/** The engine's semver shape (the same one plugin-loader.ts uses for plugin versions). */
+const SEMVER_PATTERN = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * The gate an app release passes before it is stored: the manifest is there,
+ * belongs to this item, is the version being released, runs on the engine,
+ * draws something and says what it needs. Every refusal names the field path.
+ *
+ * This is a minimal gate; the full rule set is @nextgent/app-engine
+ * validateManifest (DECISIONS #23). It moves here once that package installs
+ * into Paperclip.
+ */
+export function assertAppManifest(payload: Record<string, unknown>, item: { key: string }, version: string): void {
+  const fail = (field: string, problem: string): never => {
+    throw badRequest(`App release is not valid: ${field} ${problem}`);
+  };
+  if (!isRecord(payload.nextgent) || payload.nextgent.kind !== "app") fail("payload.nextgent.kind", 'must be "app"');
+  const app = payload.app;
+  if (!isRecord(app)) return fail("payload.app", "must be the app manifest object");
+  if (app.schema_version === undefined || app.schema_version === null) fail("payload.app.schema_version", "is required");
+  if (app.id !== item.key) fail("payload.app.id", `must equal the item key "${item.key}"`);
+  if (!SEMVER_PATTERN.test(version)) fail("payload.app.version", "must be a semver version (an app's release version is its manifest version)");
+  if (app.version !== version) fail("payload.app.version", `must equal the release version "${version}"`);
+  if (!isRecord(app.runtime) || app.runtime.type !== "engine") fail("payload.app.runtime.type", 'must be "engine"');
+  if (!isRecord(app.ui)) fail("payload.app.ui", "must be an object");
+  if (!Array.isArray(app.permissions)) fail("payload.app.permissions", "must be an array");
+}
+
 /**
  * Resource keys the platform itself binds to an install (e.g. the routine an
  * automation hands work to). Release payload keys cannot start with "_", so
@@ -143,12 +177,9 @@ export function isPlatformResourceKey(key: string) {
   return key.startsWith(PLATFORM_RESOURCE_KEY_PREFIX);
 }
 
-/**
- * Kinds whose releases carry no company content: a plugin turns a plugin on,
- * and a box-release is a signed computer release plan the computers fetch.
- */
+/** Kinds whose releases carry no company content: a plugin turns a plugin on. */
 export function itemHasContent(kind: string) {
-  return kind !== "plugin" && kind !== "box-release";
+  return kind !== "plugin";
 }
 
 type ItemRow = typeof storeItems.$inferSelect;

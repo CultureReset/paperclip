@@ -104,6 +104,19 @@ describeEmbeddedPostgres("store", () => {
       .expect(403);
   });
 
+  it("accepts every store kind but the retired box-release", async () => {
+    const app = appAs(admin);
+    await request(app).post("/api/store/admin/items").send({ key: "box", kind: "box-release", name: "Box" }).expect(400);
+    const meta = await request(app).get("/api/store/admin/meta").expect(200);
+    expect(meta.body.kinds).toEqual(["plugin", "pack", "skill", "automation", "connector", "agent", "app", "layout"]);
+    const layout = (await request(app).post("/api/store/admin/items").send({ key: "front-page", kind: "layout", name: "Front page" }).expect(201)).body;
+    await request(app).post(`/api/store/admin/items/${layout.id}/versions`).send({ version: "1.0.0", payload: {} }).expect(400);
+    await request(app)
+      .post(`/api/store/admin/items/${layout.id}/versions`)
+      .send({ version: "1.0.0", payload: { layout: { id: "front-page", version: "1.0.0" } } })
+      .expect(201);
+  });
+
   it("hides drafts and shows published items", async () => {
     const companyId = await seedCompany("SEE", [{ userId: "owner", role: "owner" }]);
     const app = appAs(admin);
@@ -161,7 +174,12 @@ describeEmbeddedPostgres("store", () => {
 
     await request(appAs(member("alice", auto))).post(`/api/companies/${auto}/store/${itemId}/install`).send({}).expect(201);
     await request(appAs(member("bob", manual))).post(`/api/companies/${manual}/store/${itemId}/install`).send({ approvalMode: "manual" }).expect(201);
-    await request(appAs(member("carol", fast))).post(`/api/companies/${fast}/store/${itemId}/install`).send({ channel: "fast" }).expect(201);
+    const fastInstall = await request(appAs(member("carol", fast))).post(`/api/companies/${fast}/store/${itemId}/install`).send({ channel: "fast" }).expect(201);
+    // The channel the owner chose at install lands on the install row (Play-user sends it from the install sheet).
+    expect(fastInstall.body).toMatchObject({ channel: "fast", approvalMode: "automatic" });
+    const [fastRow] = await db.select().from(storeInstalls).where(eq(storeInstalls.companyId, fast));
+    expect(fastRow).toMatchObject({ id: fastInstall.body.id, channel: "fast" });
+    expect(await view("carol", fast)).toMatchObject({ channel: "fast", installId: fastRow.id, installEnabled: true, versionId: fastRow.versionId });
 
     // A stable enhancement: automatic installs take it, manual ones are offered it.
     expect((await release({ version: "1.1.0" })).body).toMatchObject({ appliedTo: 2, pendingFor: 1 });

@@ -1,6 +1,7 @@
 import { api } from "./client";
 
-export type StoreItemKind = "plugin" | "pack" | "skill" | "automation" | "connector";
+/** Mirrors STORE_ITEM_KINDS on the server (the database constraint). */
+export type StoreItemKind = "plugin" | "pack" | "skill" | "automation" | "connector" | "agent" | "app" | "layout";
 export type StoreItemStatus = "draft" | "published" | "retired";
 export type StoreChannel = "stable" | "fast";
 export type StoreAdvisoryType = "security" | "bugfix" | "enhancement";
@@ -53,6 +54,15 @@ export interface StoreListing {
   updateAdvisory: StoreAdvisoryType | null;
   updateChangelog: string | null;
   contents: { skills: number; agents: number; routines: number; menu: string[] };
+  /** The install row, null before install. */
+  installId: string | null;
+  installEnabled: boolean | null;
+  /** The release shown: the installed one, or the latest on the channel. */
+  versionId: string | null;
+  /** An app's manifest (installed release, else latest); null for other kinds. */
+  app: Record<string, unknown> | null;
+  price: { amountCents: number; currency: string | null; interval: string | null; model: string | null } | null;
+  approvedPermissions: string[];
 }
 
 export interface StoreRelease {
@@ -67,6 +77,8 @@ export interface StoreRelease {
 export interface StoreSubscription {
   channel?: StoreChannel;
   approvalMode?: StoreApprovalMode;
+  /** Install only: optional permissions the owner declines. */
+  declinedPermissions?: string[];
 }
 
 export interface StoreItemCreate {

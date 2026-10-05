@@ -17,6 +17,9 @@ export const STORE_KIND_LABELS: Record<StoreItemKind, string> = {
   skill: "Skill",
   automation: "Automation",
   connector: "Connector",
+  agent: "Agent",
+  app: "App",
+  layout: "Layout",
 };
 
 const ADVISORY_LABELS: Record<StoreAdvisoryType, string> = {
