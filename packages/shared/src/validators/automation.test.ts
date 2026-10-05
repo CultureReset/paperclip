@@ -9,6 +9,7 @@ import {
 import {
   isNextgentEventName,
   nextgentEventSchema,
+  piiTemplatePaths,
   validateAutomationDefinition,
 } from "./automation.js";
 
@@ -102,6 +103,25 @@ describe("validateAutomationDefinition (port of gcr validateDefinition)", () => 
     expect(validateAutomationDefinition(listen("nope.nothing"), { events: known }).some((p) => /event/i.test(p))).toBe(true);
     // Without a list, validation is as before (the admin builds for every business).
     expect(validateAutomationDefinition(listen("nope.nothing"))).toEqual([]);
+  });
+});
+
+describe("agent steps may not carry customer fields (DECISIONS #92)", () => {
+  const agentStep = (config: Record<string, unknown>) => ({ ...DEFINITION, steps: [{ id: "hand", type: "agent", config: { item_key: "review-agent", ...config } }] });
+  it("refuses trigger.payload paths that name PII in instructions or payload", () => {
+    for (const bad of ["{{ trigger.payload.customer_name }}", "{{ trigger.payload.booking.customer_email }}", "{{ trigger.payload.booking.details }}", "{{ trigger.payload.guest.phone }}", "{{ trigger.payload.Address }}"]) {
+      const problems = validateAutomationDefinition(agentStep({ instructions: `Ask ${bad} for a review` }));
+      expect(problems.some((p) => /may not use customer fields/.test(p) && /trigger\.ref/.test(p))).toBe(true);
+    }
+    expect(validateAutomationDefinition(agentStep({ payload: { booking: "{{ trigger.payload.booking.customer_phone }}" } })).some((p) => /payload may not use customer fields/.test(p))).toBe(true);
+    expect(validateAutomationDefinition(agentStep({ payload: '{"who": "{{ trigger.payload.booking.customer_name }}"}' })).some((p) => /payload may not use customer fields/.test(p))).toBe(true);
+  });
+  it("allows trigger.ref and non-PII payload paths, and other steps keep using the payload", () => {
+    expect(validateAutomationDefinition(agentStep({ instructions: "Ask the guest of booking {{ trigger.ref.booking_id }} for a review", payload: { booking: "{{ trigger.ref }}" } }))).toEqual([]);
+    expect(validateAutomationDefinition(agentStep({ instructions: "Booking {{ trigger.payload.booking.booking_id }} on {{ trigger.payload.booking.date }}" }))).toEqual([]);
+    const messageStep = { ...DEFINITION, steps: [{ id: "m", type: "message", config: { channel: "email", to: "{{ trigger.payload.booking.customer_email }}", body: "hi" } }] };
+    expect(validateAutomationDefinition(messageStep)).toEqual([]);
+    expect(piiTemplatePaths("{{ trigger.payload.booking.customer_email }} and {{ trigger.ref.date }}")).toEqual(["trigger.payload.booking.customer_email"]);
   });
 });
 

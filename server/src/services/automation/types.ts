@@ -26,6 +26,12 @@ export interface RunTrigger {
   payload: unknown;
 }
 
+/** The trigger as the run sees it: type, event name, the payload and its non-PII ref (ref.ts). */
+export interface RunTriggerContext extends RunTrigger {
+  event: string | null;
+  ref: Record<string, unknown>;
+}
+
 export interface RunAutomationRef {
   id: string | null;
   key: string | null;
@@ -46,7 +52,7 @@ export interface RunContext {
   companyId: string;
   business: RunBusiness;
   config: Record<string, unknown>;
-  trigger: RunTrigger;
+  trigger: RunTriggerContext;
   steps: Record<string, unknown>;
   now: string;
   output: RunOutput;
@@ -61,7 +67,8 @@ export interface BusinessMcp {
 }
 
 export interface AgentHandoff {
-  /** Which agent of this company: by id, or by the store item (and agent key) whose install created it. */
+  /** Which agent of this company: by id, by the store install that created it, or by the store item (and agent key). */
+  installId?: string | null;
   agentId?: string | null;
   itemKey?: string | null;
   agentKey?: string | null;
@@ -195,7 +202,7 @@ export interface RunRecorder {
     record: RunRecord;
     stepIndex: number;
     dueAt: string;
-    context: { trigger: RunTrigger; steps: Record<string, unknown>; automation: RunAutomationRef | null };
+    context: { trigger: RunTriggerContext; steps: Record<string, unknown>; automation: RunAutomationRef | null };
   }): Promise<void>;
   touchRoutine(input: { routineId: string; lastRunAt: Date; lastRunStatus: RunStatus }): Promise<void>;
   notifyFailure(input: { companyId: string; runId: string | null; automationName: string | null; error: string }): Promise<void>;

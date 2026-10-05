@@ -1,4 +1,5 @@
 import { renderDeep, resolveConfig, truncate, outputBudget } from "./template.js";
+import { triggerContext } from "./ref.js";
 import { stepDescriptor, stepModule } from "./steps/registry.js";
 import type {
   RunContext,
@@ -34,7 +35,7 @@ export async function runDefinition(opts: RunDefinitionOptions): Promise<RunResu
     companyId: opts.companyId,
     business: opts.business ?? {},
     config: resolveConfig(definition.config_schema, opts.config ?? null),
-    trigger: { type: opts.trigger?.type || "manual", payload: opts.trigger?.payload ?? null },
+    trigger: triggerContext(opts.trigger),
     steps: resume?.steps ? { ...resume.steps } : {},
     now: startedAt.toISOString(),
     output: { notices: [], logs: [] },

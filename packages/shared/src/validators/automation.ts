@@ -79,6 +79,40 @@ export type AutomationStep = z.infer<typeof automationStepSchema>;
 export type AutomationTrigger = z.infer<typeof automationTriggerSchema>;
 export type AutomationConfigField = z.infer<typeof automationConfigFieldSchema>;
 
+/**
+ * DECISIONS #92: an agent step's `instructions` and `payload` leave the
+ * business's database, so they may not template customer fields out of the
+ * trigger payload. A `{{ trigger.payload.… }}` path whose segments name any
+ * of these is refused; authors use `{{ trigger.ref.* }}` and the agent reads
+ * the customer's record through the business MCP.
+ */
+export const AUTOMATION_PII_PATH_WORDS = ["name", "email", "phone", "address", "details", "customer", "guest"] as const;
+const TEMPLATE_PATHS = /\{\{\s*([A-Za-z0-9_$.\-]+)\s*\}\}/g;
+const AGENT_OUTBOUND_FIELDS = ["instructions", "payload"] as const;
+
+function templatePaths(value: unknown, out: string[] = []): string[] {
+  if (typeof value === "string") {
+    for (const match of value.matchAll(TEMPLATE_PATHS)) out.push(match[1]);
+  } else if (Array.isArray(value)) {
+    for (const v of value) templatePaths(v, out);
+  } else if (value && typeof value === "object") {
+    for (const v of Object.values(value as Record<string, unknown>)) templatePaths(v, out);
+  }
+  return out;
+}
+
+/** The `trigger.payload.*` paths in `value` that name a customer field. */
+export function piiTemplatePaths(value: unknown): string[] {
+  return templatePaths(value).filter((path) => {
+    const segments = path.split(".");
+    if (segments[0] !== "trigger" || segments[1] !== "payload") return false;
+    return segments.slice(2).some((segment) => {
+      const lower = segment.toLowerCase();
+      return AUTOMATION_PII_PATH_WORDS.some((word) => lower.includes(word));
+    });
+  });
+}
+
 export interface ValidateAutomationOptions {
   /** Refuse the platform-only steps (script, http.request). */
   forOwner?: boolean;
@@ -127,6 +161,14 @@ export function validateAutomationDefinition(def: Record<string, unknown> | null
     for (const f of descriptor.fields) {
       const v = config[f.key];
       if (f.required && (v == null || v === "")) problems.push(`Step "${String(s.name || id)}": ${f.label} is required.`);
+    }
+    if (s.type === "agent") {
+      for (const field of AGENT_OUTBOUND_FIELDS) {
+        const paths = piiTemplatePaths(config[field]);
+        if (paths.length) {
+          problems.push(`Step "${String(s.name || id)}": ${field} may not use customer fields from the trigger (${paths.join(", ")}); use {{ trigger.ref.* }} and let the agent read the customer's record.`);
+        }
+      }
     }
   });
 
