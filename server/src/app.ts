@@ -54,6 +54,7 @@ import { statusCardRoutes } from "./routes/status-cards.js";
 import { teamsCatalogRoutes } from "./routes/teams-catalog.js";
 import { storeRoutes } from "./routes/store.js";
 import { nextgentPublicRoutes, nextgentRoutes } from "./routes/nextgent.js";
+import { nextgentDeviceTokenGuard } from "./middleware/nextgent-device-token.js";
 import { nextgentBusinessPlugin } from "./services/nextgent-business-plugin.js";
 import { agentRoutes } from "./routes/agents.js";
 import type { SetupTokenSessionService } from "./services/setup-token-session.js";
@@ -573,6 +574,8 @@ export async function createApp(
   // REPLACES whatever actor the request otherwise resolved to, and only on
   // the one endpoint it authorizes (see the middleware for the contract).
   app.use(cloudControlMiddleware());
+  // A NEXT GENT device token (a box's read-only credential) is held to its four list reads.
+  app.use(nextgentDeviceTokenGuard());
   app.use("/api/auth", authRoutes(db));
   if (opts.betterAuthHandler) {
     app.all("/api/auth/{*authPath}", opts.betterAuthHandler);
