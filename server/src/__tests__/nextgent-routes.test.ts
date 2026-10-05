@@ -307,10 +307,14 @@ describe("signed inbound endpoints (contract §5)", () => {
     mockInbound.recordConversation.mockResolvedValue({ id: "c1" });
     const conversation = {
       companyId: "nextgent",
+      conversationId: "lc-9",
       channel: "sms",
-      from: "+10000000001",
-      to: "+10000000002",
-      transcript: [{ role: "caller", text: "hi", at: "2026-10-04T12:00:00Z" }],
+      mode: "business",
+      threadId: "thread-1",
+      startedAt: "2026-10-04T12:00:00Z",
+      endedAt: "2026-10-04T12:05:00Z",
+      turns: 3,
+      outcome: "answered",
     };
     const app = await appAs(null);
     expect((await request(app).post("/api/nextgent/conversations").send(conversation)).status).toBe(401);
@@ -321,6 +325,20 @@ describe("signed inbound endpoints (contract §5)", () => {
       .set("content-type", "application/json")
       .send(body);
     expect(res.status).toBe(201);
-    expect(mockInbound.recordConversation).toHaveBeenCalledWith(expect.objectContaining({ companyId: "nextgent", channel: "sms" }));
+    expect(mockInbound.recordConversation).toHaveBeenCalledWith(expect.objectContaining({ companyId: "nextgent", conversationId: "lc-9", channel: "sms", turns: 3 }));
+  });
+
+  it("still accepts the old conversation shape and caps the reference fields", async () => {
+    mockInbound.recordConversation.mockResolvedValue({ id: "c1" });
+    const app = await appAs(null);
+    const post = async (payload: unknown) => {
+      const body = JSON.stringify(payload);
+      return request(app).post("/api/nextgent/conversations").set(signed("/api/nextgent/conversations", body)).set("content-type", "application/json").send(body);
+    };
+    const old = { companyId: "nextgent", channel: "voice", from: "+10000000001", to: "+10000000002", transcript: [{ role: "caller", text: "hi", at: "2026-10-04T12:00:00Z" }] };
+    expect((await post(old)).status).toBe(201);
+    expect((await post({ companyId: "nextgent", channel: "sms", outcome: "x".repeat(501) })).status).toBe(400);
+    expect((await post({ companyId: "nextgent", channel: "sms", turns: -1 })).status).toBe(400);
+    expect((await post({ companyId: "nextgent", channel: "chat" })).status).toBe(400);
   });
 });

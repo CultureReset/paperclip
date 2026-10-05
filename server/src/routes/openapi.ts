@@ -11508,4 +11508,4 @@ registerCurrentRoute({ method: "post", path: "/api/companies/{companyId}/busines
 registerCurrentRoute({ method: "delete", path: "/api/companies/{companyId}/business-link", tags: ["nextgent"], summary: "Unlink the company from its business" });
 registerCurrentRoute({ method: "get", path: "/.well-known/jwks.json", tags: ["nextgent"], summary: "Business-token verification keys" });
 registerCurrentRoute({ method: "post", path: "/api/nextgent/receipts", tags: ["nextgent"], summary: "Record a receipt (signed by gcr-api-clean)" });
-registerCurrentRoute({ method: "post", path: "/api/nextgent/conversations", tags: ["nextgent"], summary: "Record a call or text conversation (signed by gcr-api-clean)" });
+registerCurrentRoute({ method: "post", path: "/api/nextgent/conversations", tags: ["nextgent"], summary: "Record a reference to a call or text conversation (signed by gcr-api-clean; no transcript, no customer number)" });

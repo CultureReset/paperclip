@@ -134,13 +134,21 @@ POST /api/nextgent/conversations
 ```
 
 ```json
-{ "companyId": "…", "channel": "voice", "from": "…", "to": "…",
-  "transcript": [{ "role": "…", "text": "…", "at": "…" }],
-  "summary": "…", "outcome": "…" }
+{ "companyId": "…", "conversationId": "…", "channel": "voice", "mode": "…",
+  "threadId": "…", "startedAt": "…", "endedAt": "…", "turns": 4, "outcome": "…" }
 ```
 
-`companyId` may be `"nextgent"`, which means `NEXTGENT_PLATFORM_COMPANY_ID`.
-Recorded in Activity (`nextgent.conversation`). Response `201 { "id" }`.
+A reference to a conversation gcr-api-clean holds (`live_conversations`):
+`conversationId` is its id there; `channel` is `voice` or `sms`; everything
+but `companyId` and `channel` is optional. `companyId` may be `"nextgent"`,
+which means `NEXTGENT_PLATFORM_COMPANY_ID`. Recorded in Activity
+(`nextgent.conversation`) with exactly these fields. The transcript and the
+customer's number stay in gcr-api-clean: the older body (`from`, `to`,
+`transcript`, `summary`) is still accepted, but those fields are dropped
+before anything is written (`turns` is then the transcript's length).
+`server/sql/strip-conversation-transcripts.sql` strips them from rows
+recorded before this change; the owner applies it by hand. Response
+`201 { "id" }`.
 
 ```
 GET /api/companies/{companyId}/receipts?limit=50&offset=0

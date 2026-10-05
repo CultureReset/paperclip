@@ -914,10 +914,38 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
   it("records conversations, sending \"nextgent\" to the platform company", async () => {
     const platform = await seedCompany("PLT");
     const inbound = nextgentInboundService(db, { config: configWith({ platformCompanyId: platform }) });
-    const conversation = { channel: "voice" as const, from: "a", to: "b", transcript: [{ role: "caller", text: "hello", at: "t" }], summary: "said hello" };
+    const conversation = {
+      conversationId: "lc-1",
+      channel: "voice" as const,
+      mode: "concierge",
+      startedAt: "2026-10-04T12:00:00Z",
+      endedAt: "2026-10-04T12:03:00Z",
+      turns: 4,
+      outcome: "booked",
+      // The old shape is still tolerated but never stored (DECISIONS #34).
+      from: "+10000000001",
+      to: "+10000000002",
+      transcript: [{ role: "caller", text: "hello", at: "t" }],
+      summary: "said hello",
+    };
     await inbound.recordConversation({ companyId: "nextgent", ...conversation });
     const activity = await db.select().from(activityLog).where(eq(activityLog.action, "nextgent.conversation"));
     expect(activity[0]).toMatchObject({ companyId: platform, entityType: "nextgent_conversation" });
+    expect(activity[0].details).toEqual({
+      conversationId: "lc-1",
+      channel: "voice",
+      mode: "concierge",
+      threadId: null,
+      startedAt: "2026-10-04T12:00:00Z",
+      endedAt: "2026-10-04T12:03:00Z",
+      turns: 4,
+      outcome: "booked",
+    });
+    // An old-shape post carries no reference fields: turns comes from the transcript length, nothing else is kept.
+    const other = await seedCompany("CNV");
+    await inbound.recordConversation({ companyId: other, channel: "sms", from: "a", to: "b", transcript: [{ role: "caller", text: "x", at: "t" }, { role: "agent", text: "y", at: "t" }] });
+    const old = await db.select().from(activityLog).where(and(eq(activityLog.action, "nextgent.conversation"), eq(activityLog.companyId, other)));
+    expect(old[0].details).toEqual({ conversationId: null, channel: "sms", mode: null, threadId: null, startedAt: null, endedAt: null, turns: 2, outcome: null });
     await expect(
       nextgentInboundService(db, { config: configWith() }).recordConversation({ companyId: "nextgent", ...conversation }),
     ).rejects.toMatchObject({ status: 422 });

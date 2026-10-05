@@ -24,16 +24,45 @@ export const nextgentReceiptSchema = z.object({
 });
 export type NextgentReceipt = z.infer<typeof nextgentReceiptSchema>;
 
+const shortString = (max: number) => z.string().trim().min(1).max(max).nullish();
+
+/**
+ * A conversation REFERENCE (DECISIONS #34): which call or text happened,
+ * when, over which channel, and how it ended. The transcript and the
+ * customer's number stay in gcr-api-clean (`live_conversations`). The old
+ * shape (`from`, `to`, `transcript`, `summary`) is still accepted so an older
+ * gcr-api-clean is not refused and retried forever, but none of it is stored.
+ */
 export const nextgentConversationSchema = z.object({
-  companyId: z.string().trim().min(1),
+  companyId: z.string().trim().min(1).max(200),
+  conversationId: shortString(200),
   channel: z.enum(["voice", "sms"]),
-  from: z.string().trim().min(1),
-  to: z.string().trim().min(1),
-  transcript: z.array(z.object({ role: z.string().trim().min(1), text: z.string(), at: z.string().trim().min(1) })),
+  mode: shortString(100),
+  threadId: shortString(200),
+  startedAt: shortString(100),
+  endedAt: shortString(100),
+  turns: z.number().int().min(0).nullish(),
+  outcome: shortString(500),
+  from: z.string().nullish(),
+  to: z.string().nullish(),
+  transcript: z.array(z.unknown()).nullish(),
   summary: z.string().nullish(),
-  outcome: z.string().nullish(),
 });
 export type NextgentConversation = z.infer<typeof nextgentConversationSchema>;
+
+/** The fields of a conversation that Paperclip keeps; nothing else from the body reaches the database. */
+export function conversationReference(conversation: NextgentConversation) {
+  return {
+    conversationId: conversation.conversationId ?? null,
+    channel: conversation.channel,
+    mode: conversation.mode ?? null,
+    threadId: conversation.threadId ?? null,
+    startedAt: conversation.startedAt ?? null,
+    endedAt: conversation.endedAt ?? null,
+    turns: conversation.turns ?? conversation.transcript?.length ?? null,
+    outcome: conversation.outcome ?? null,
+  };
+}
 
 /** Activity action receipts are stored under. */
 export const RECEIPT_ACTION = "nextgent.receipt";
@@ -181,14 +210,7 @@ export function nextgentInboundService(db: Db, options: { config?: NextgentConfi
         action: "nextgent.conversation",
         entityType: "nextgent_conversation",
         entityId: id,
-        details: {
-          channel: conversation.channel,
-          from: conversation.from,
-          to: conversation.to,
-          transcript: conversation.transcript,
-          summary: conversation.summary ?? null,
-          outcome: conversation.outcome ?? null,
-        },
+        details: conversationReference(conversation),
       });
       return { id };
     },
