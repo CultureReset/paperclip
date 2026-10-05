@@ -147,10 +147,23 @@ const isRecord = (value: unknown): value is Record<string, unknown> => !!value &
  * belongs to this item, is the version being released, runs on the engine,
  * draws something and says what it needs. Every refusal names the field path.
  *
+ * The Step 5 keys (bindings, actions, events, data.tables.*.inbox; DECISIONS
+ * #45-#47) are checked for shape only, mirroring the engine's manifest.js.
+ *
  * This is a minimal gate; the full rule set is @nextgent/app-engine
  * validateManifest (DECISIONS #23). It moves here once that package installs
  * into Paperclip.
  */
+/**
+ * Dotted names: contracts (menu.items) and events (booking.created). Segments may
+ * carry dashes because app events are <appKey>.<event> (DECISIONS #47) and item
+ * keys have dashes; the engine's DOTTED is the stricter rule.
+ */
+const DOTTED_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+$/;
+const BINDING_ACCESS = ["read", "read-write"];
+const ACTION_KINDS = ["read", "create", "update"];
+const isDotted = (value: unknown) => typeof value === "string" && DOTTED_PATTERN.test(value);
+const isNonEmptyString = (value: unknown) => typeof value === "string" && value.trim().length > 0;
 export function assertAppManifest(payload: Record<string, unknown>, item: { key: string }, version: string): void {
   const fail = (field: string, problem: string): never => {
     throw badRequest(`App release is not valid: ${field} ${problem}`);
@@ -165,6 +178,64 @@ export function assertAppManifest(payload: Record<string, unknown>, item: { key:
   if (!isRecord(app.runtime) || app.runtime.type !== "engine") fail("payload.app.runtime.type", 'must be "engine"');
   if (!isRecord(app.ui)) fail("payload.app.ui", "must be an object");
   if (!Array.isArray(app.permissions)) fail("payload.app.permissions", "must be an array");
+
+  // bindings: {<key>: {contract: dotted, access: read|read-write, fieldMap?: object}} (DECISIONS #45).
+  if (app.bindings !== undefined) {
+    if (!isRecord(app.bindings)) return fail("payload.app.bindings", "must be an object keyed by binding name");
+    for (const [key, binding] of Object.entries(app.bindings)) {
+      const path = `payload.app.bindings.${key}`;
+      if (!isRecord(binding)) return fail(path, "must be an object { contract, access, fieldMap? }");
+      if (!isDotted(binding.contract)) fail(`${path}.contract`, "must be a dotted contract name, e.g. menu.items");
+      if (!BINDING_ACCESS.includes(binding.access as string)) fail(`${path}.access`, `must be one of ${BINDING_ACCESS.join(", ")}`);
+      if (binding.fieldMap !== undefined && !isRecord(binding.fieldMap)) fail(`${path}.fieldMap`, "must be an object mapping app field to column");
+    }
+  }
+
+  // actions: [{id, summary, kind: read|create|update, binding | table}] (DECISIONS #46).
+  if (app.actions !== undefined) {
+    if (!Array.isArray(app.actions)) return fail("payload.app.actions", "must be an array");
+    app.actions.forEach((action, index) => {
+      const path = `payload.app.actions[${index}]`;
+      if (!isRecord(action)) return fail(path, "must be an object { id, summary, kind, binding | table }");
+      if (!isNonEmptyString(action.id)) fail(`${path}.id`, "is required");
+      if (!isNonEmptyString(action.summary)) fail(`${path}.summary`, "is required");
+      if (!ACTION_KINDS.includes(action.kind as string)) fail(`${path}.kind`, `must be one of ${ACTION_KINDS.join(", ")}`);
+      const hasBinding = action.binding !== undefined;
+      const hasTable = action.table !== undefined;
+      if (hasBinding === hasTable) fail(path, "must name exactly one of binding or table");
+      if (hasBinding && !isNonEmptyString(action.binding)) fail(`${path}.binding`, "must be a binding key");
+      if (hasTable && !isNonEmptyString(action.table)) fail(`${path}.table`, "must be an app table name");
+    });
+  }
+
+  // events: {emits?: dotted[], subscribes?: [{event: dotted, path}]} (DECISIONS #47).
+  if (app.events !== undefined) {
+    if (!isRecord(app.events)) return fail("payload.app.events", "must be an object { emits?, subscribes? }");
+    if (app.events.emits !== undefined) {
+      if (!Array.isArray(app.events.emits)) return fail("payload.app.events.emits", "must be an array of event names");
+      app.events.emits.forEach((event, index) => {
+        if (!isDotted(event)) fail(`payload.app.events.emits[${index}]`, "must be a dotted event name, e.g. menu-app.submitted");
+      });
+    }
+    if (app.events.subscribes !== undefined) {
+      if (!Array.isArray(app.events.subscribes)) return fail("payload.app.events.subscribes", "must be an array of { event, path }");
+      app.events.subscribes.forEach((entry, index) => {
+        const path = `payload.app.events.subscribes[${index}]`;
+        if (!isRecord(entry)) return fail(path, "must be an object { event, path }");
+        if (!isDotted(entry.event)) fail(`${path}.event`, "must be a dotted event name, e.g. booking.created");
+        if (!isNonEmptyString(entry.path)) fail(`${path}.path`, "is required");
+      });
+    }
+  }
+
+  // data.tables.<table>.inbox: a submissions table that feeds the owner's inbox (review 11 §6).
+  if (isRecord(app.data) && isRecord(app.data.tables)) {
+    for (const [table, def] of Object.entries(app.data.tables)) {
+      if (isRecord(def) && def.inbox !== undefined && typeof def.inbox !== "boolean") {
+        fail(`payload.app.data.tables.${table}.inbox`, "must be true or false");
+      }
+    }
+  }
 }
 
 /**

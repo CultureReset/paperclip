@@ -762,6 +762,46 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       await release(engineManifest("menu-app", "1.0.0"));
     });
 
+    it("checks the shape of bindings, actions, events and inbox flags, naming the field", async () => {
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith({ gcrApiUrl: null }) }) });
+      const item = await store.create({ key: "menu-app", kind: "app", name: "Menu" }, null);
+      const release = (extra: Record<string, unknown>) =>
+        store.addVersion(item.id, { version: "1.0.0", payload: { app: engineManifest("menu-app", "1.0.0", extra), nextgent: { kind: "app", permissions: [] } } }, null);
+      const refuses = (extra: Record<string, unknown>, field: string) =>
+        expect(release(extra)).rejects.toMatchObject({ status: 400, message: expect.stringContaining(`App release is not valid: ${field} `) });
+
+      await refuses({ bindings: [] }, "payload.app.bindings");
+      await refuses({ bindings: { menu: "menu.items" } }, "payload.app.bindings.menu");
+      await refuses({ bindings: { menu: { contract: "menu", access: "read" } } }, "payload.app.bindings.menu.contract");
+      await refuses({ bindings: { menu: { contract: "menu.items", access: "write" } } }, "payload.app.bindings.menu.access");
+      await refuses({ bindings: { menu: { contract: "menu.items", access: "read", fieldMap: ["name"] } } }, "payload.app.bindings.menu.fieldMap");
+
+      await refuses({ actions: {} }, "payload.app.actions");
+      await refuses({ actions: [{ summary: "List dishes", kind: "read", binding: "menu" }] }, "payload.app.actions[0].id");
+      await refuses({ actions: [{ id: "list_dishes", kind: "read", binding: "menu" }] }, "payload.app.actions[0].summary");
+      await refuses({ actions: [{ id: "list_dishes", summary: "List dishes", kind: "delete", binding: "menu" }] }, "payload.app.actions[0].kind");
+      await refuses({ actions: [{ id: "list_dishes", summary: "List dishes", kind: "read" }] }, "payload.app.actions[0]");
+      await refuses({ actions: [{ id: "list_dishes", summary: "List dishes", kind: "read", binding: "menu", table: "dishes" }] }, "payload.app.actions[0]");
+
+      await refuses({ events: [] }, "payload.app.events");
+      await refuses({ events: { emits: ["booking"] } }, "payload.app.events.emits[0]");
+      await refuses({ events: { subscribes: [{ event: "booking.created" }] } }, "payload.app.events.subscribes[0].path");
+      await refuses({ events: { subscribes: [{ event: "booking", path: "/on-booking" }] } }, "payload.app.events.subscribes[0].event");
+
+      await refuses({ data: { tables: { requests: { columns: { body: { type: "text" } }, inbox: "yes" } } } }, "payload.app.data.tables.requests.inbox");
+
+      // The well-formed shapes pass; the engine validator (DECISIONS #23) holds the full rules.
+      await release({
+        bindings: { menu: { contract: "menu.items", access: "read-write", fieldMap: { name: "item_name" } }, bookings: { contract: "booking.records", access: "read" } },
+        actions: [
+          { id: "list_dishes", summary: "List the dishes on the menu", kind: "read", binding: "menu" },
+          { id: "add_request", summary: "Add a song request", kind: "create", table: "requests" },
+        ],
+        events: { emits: ["menu-app.submitted"], subscribes: [{ event: "booking.created", path: "/on-booking" }] },
+        data: { tables: { requests: { columns: { body: { type: "text" } }, public: "append", inbox: true } } },
+      });
+    });
+
     it("registers an app with gcr-api-clean even without a NEXT GENT section, and tells it when the owner turns a pushed install on", async () => {
       const companyId = await seedCompany("APN");
       const { calls, fetch } = fakeUpstream({
