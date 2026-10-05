@@ -27,6 +27,8 @@ export const storeItems = pgTable(
     priceCurrency: text("price_currency"),
     priceInterval: text("price_interval"),
     priceModel: text("price_model"),
+    /** Who may have it: free (everyone), plan (the company's plan includes it) or grant (operator grant only). DECISIONS #83. */
+    access: text("access").notNull().default("free"),
     status: text("status").notNull().default("draft"),
     latestVersionId: uuid("latest_version_id"),
     createdByUserId: text("created_by_user_id"),
@@ -42,6 +44,7 @@ export const storeItems = pgTable(
       sql`${table.kind} IN ('plugin', 'pack', 'skill', 'automation', 'connector', 'agent', 'app', 'layout')`,
     ),
     statusCheck: check("store_items_status_check", sql`${table.status} IN ('draft', 'published', 'retired')`),
+    accessCheck: check("store_items_access_check", sql`${table.access} IN ('free', 'plan', 'grant')`),
     pluginKeyCheck: check(
       "store_items_plugin_key_check",
       sql`(${table.kind} = 'plugin') = (${table.pluginKey} IS NOT NULL)`,

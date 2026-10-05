@@ -81,7 +81,7 @@ export const createRoutineSchema = z.object({
   variables: z.array(routineVariableSchema).optional().default([]),
   env: envConfigSchema.optional().nullable(),
   /** "agent" (default): every run is an issue for the assignee; "steps": the deterministic step runner (DECISIONS #82). */
-  mode: z.enum(ROUTINE_MODES).optional().default("agent"),
+  mode: z.enum(ROUTINE_MODES).optional(),
   /** The automation definition a "steps" routine runs (trigger, steps, config_schema). */
   definition: automationDefinitionSchema.optional().nullable(),
 });

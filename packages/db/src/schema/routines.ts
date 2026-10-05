@@ -42,6 +42,12 @@ export const routines = pgTable(
     originId: text("origin_id"),
     variables: jsonb("variables").$type<RoutineVariable[]>().notNull().default([]),
     env: jsonb("env").$type<RoutineEnvConfig>(),
+    /** "agent": every run is an issue for the assignee; "steps": the deterministic step runner (DECISIONS #82). */
+    mode: text("mode").notNull().default("agent"),
+    /** The automation definition a "steps" routine runs: { trigger, steps, config_schema, … }. */
+    definition: jsonb("definition").$type<Record<string, unknown>>(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    lastRunStatus: text("last_run_status"),
     latestRevisionId: uuid("latest_revision_id"),
     latestRevisionNumber: integer("latest_revision_number").notNull().default(1),
     createdByAgentId: uuid("created_by_agent_id").references(() => agents.id, { onDelete: "set null" }),
@@ -74,6 +80,8 @@ export const routineRevisions = pgTable(
     title: text("title").notNull(),
     description: text("description"),
     snapshot: jsonb("snapshot").$type<RoutineRevisionSnapshotV1>().notNull(),
+    /** The pinned definition of a "steps" routine at this revision (a run resumes on the revision it started on). */
+    definition: jsonb("definition").$type<Record<string, unknown>>(),
     changeSummary: text("change_summary"),
     restoredFromRevisionId: uuid("restored_from_revision_id").references(
       (): AnyPgColumn => routineRevisions.id,
@@ -123,6 +131,8 @@ export const routineTriggers = pgTable(
     secretId: uuid("secret_id").references(() => companySecrets.id, { onDelete: "set null" }),
     signingMode: text("signing_mode"),
     replayWindowSec: integer("replay_window_sec"),
+    /** kind "event": the business event listened for (DECISIONS #87). */
+    eventName: text("event_name"),
     lastRotatedAt: timestamp("last_rotated_at", { withTimezone: true }),
     lastResult: text("last_result"),
     createdByAgentId: uuid("created_by_agent_id").references(() => agents.id, { onDelete: "set null" }),
@@ -138,6 +148,7 @@ export const routineTriggers = pgTable(
     nextRunIdx: index("routine_triggers_next_run_idx").on(table.nextRunAt),
     publicIdIdx: index("routine_triggers_public_id_idx").on(table.publicId),
     publicIdUq: uniqueIndex("routine_triggers_public_id_uq").on(table.publicId),
+    companyEventIdx: index("routine_triggers_company_event_idx").on(table.companyId, table.eventName),
   }),
 );
 
@@ -160,6 +171,11 @@ export const routineRuns = pgTable(
     coalescedIntoRunId: uuid("coalesced_into_run_id"),
     failureReason: text("failure_reason"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    /** Step runner: side-effecting steps reported instead of acting. */
+    dryRun: boolean("dry_run").notNull().default(false),
+    /** Step runner: { notices, logs } collected by notify/script steps. */
+    output: jsonb("output").$type<Record<string, unknown>>(),
+    durationMs: integer("duration_ms"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
