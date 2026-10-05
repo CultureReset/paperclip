@@ -7,6 +7,7 @@ import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
 import { NEXTGENT_SECRET_NAMES, readNextgentConfig, type NextgentConfig } from "./nextgent-config.js";
 import { nextgentBusinessPlugin } from "./nextgent-business-plugin.js";
+import { nextgentDeviceService } from "./nextgent-devices.js";
 import { gcrClient, type FetchLike, type GcrLinkRequest } from "./nextgent-gcr-client.js";
 import { nextgentSecrets } from "./nextgent-secrets.js";
 
@@ -29,6 +30,7 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
   const gcr = gcrClient({ config, fetch: options.fetch });
   const secrets = nextgentSecrets(db);
   const plugin = nextgentBusinessPlugin(db, { config });
+  const devices = nextgentDeviceService(db, { config, fetch: options.fetch });
 
   async function get(companyId: string) {
     return db
@@ -136,7 +138,11 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
       return { entitySlug: linked.entitySlug, forwardingAddress };
     },
 
-    /** Teardown: gcr-api-clean revokes and (optionally) exports; Paperclip drops its secrets and the link. */
+    /**
+     * Teardown: gcr-api-clean revokes and (optionally) exports, and revokes the
+     * business's relay nodes; Paperclip drops its secrets and the link, and
+     * marks the company's devices unlinked with their tokens revoked (DECISIONS #78).
+     */
     async unlink(companyId: string, exportData: boolean, userId: string | null) {
       const existing = await get(companyId);
       let upstream: Record<string, unknown> = {};
@@ -145,6 +151,7 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
       } else {
         logger.warn({ companyId }, "GCR_API_URL / NEXTGENT_SERVICE_SECRET not set: unlinking locally only");
       }
+      const devicesUnlinked = await devices.unlinkAll(companyId);
       const installTokens = await db
         .select({ id: storeInstalls.id, tokenSecretId: storeInstalls.tokenSecretId })
         .from(storeInstalls)
@@ -158,6 +165,7 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
       await syncPlugin(companyId);
       await secrets.remove(existing?.businessTokenSecretId ?? (await secrets.idByName(companyId, NEXTGENT_SECRET_NAMES.businessToken)));
       for (const install of installTokens) await secrets.remove(install.tokenSecretId);
+      await secrets.remove(await secrets.idByName(companyId, NEXTGENT_SECRET_NAMES.ghostMcpToken));
       await logActivity(db, {
         companyId,
         actorType: userId ? "user" : "system",
@@ -165,7 +173,7 @@ export function nextgentBusinessLinkService(db: Db, options: { config?: Nextgent
         action: "nextgent.business_unlinked",
         entityType: "company",
         entityId: companyId,
-        details: { entitySlug: existing?.entitySlug ?? null, export: exportData },
+        details: { entitySlug: existing?.entitySlug ?? null, export: exportData, devicesUnlinked },
       });
       const exportUrl = typeof upstream.exportUrl === "string" ? upstream.exportUrl : null;
       return { unlinked: true, entitySlug: existing?.entitySlug ?? null, ...(exportUrl ? { exportUrl } : {}) };
