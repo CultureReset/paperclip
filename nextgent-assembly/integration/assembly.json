@@ -113,12 +113,12 @@
         ],
         [
           "npm",
-          "test"
+          "run",
+          "build"
         ],
         [
           "npm",
-          "run",
-          "build"
+          "test"
         ]
       ]
     },

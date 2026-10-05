@@ -121,3 +121,21 @@ Production schema inventory confirms prerequisites for the existing core batch. 
 Legacy repos were checked directly on GitHub. Both remain unarchived with separate default branches and production homepage metadata. Admin-dashboard-main shares 170 identical files with Plat-admin; Dashboards-users- shares 63 identical files with Play-user. The canonical interfaces remain Plat-admin/Play-user. These older repositories are **not yet retired or fully reconciled**: the comparison identifies legacy Store/Ghost screens and automation files not present at the same paths in the canonical copies. Missing paths do not alone establish missing functionality; compare behaviors before copying or retiring. Historical legacy branch claims in READMEs require fresh branch comparison. No functionality was deleted and no retirement was performed.
 
 Remaining launch work: reviewed production migrations and existing Stripe billing activation/paid acceptance; deployed backend/UI configuration; founder company/owner/admin provisioning; actual Jarvis/Hermes/OpenClaw worker execution; legacy feature/branch reconciliation and a single Paperclip automation dispatch authority; Python/Bash map helper packaging/execution; real paired box updater delivery and Android map/approval/receipt acceptance. Existing broader Paperclip failures/skips remain documented above.
+
+
+## Restored dependencies and final checks — 2026-10-05
+
+The first broad recheck encountered missing restored-workspace dependencies; it was not a successful assembly test. Its raw results remain under logs/recheck. After npm ci using existing locks: App-build tests/typecheck/build pass (97 tests passed and one skipped in the root suite; shared engine 149 passed); Boxes tests/typecheck/build pass; Play-user tests/check/build pass; GCR public tests/build pass. Existing GCR API verification passed in the broad recheck, as did legacy-store tests.
+
+After installing existing Python dev/Android dependencies plus the test host's required HTTPX SOCKS extra: platform **93 passed**, maps **3 passed**, relay/Jarvis handoffs **2 passed**. The initial Python rerun failed because the host supplies a SOCKS proxy without socksio; that test environment issue was repaired. Loopback handoff tests use NO_PROXY for localhost/127.0.0.1/::1. Jarvis's entire selected Python suite was not rerun; these two handoffs are separate checks.
+
+Reused the existing Admin-dashboard-main GhostBoxes.jsx fleet view in Plat-admin, preserving its existing read-only behavior and GCR admin endpoints. Added /platform/ghost to the canonical registry and regenerated the section map. Seven admin tests and lint/endpoint audit/section-map check/build pass (admin-fleet-recheck.log); existing warnings remain. The fleet view uses the same Paperclip-minted admin credential bridge. Broader legacy Store and automation reconciliation remains unfinished.
+
+
+Boxes' first test command exited successfully while discovering zero tests because it runs compiled dist tests before a fresh build. After building, the rerun passed **13 tests** (boxes-built-tests.log). The assembly check order now builds Boxes before running its existing test command; no product code or test was replaced.
+
+
+The repaired assembly runner passed every configured check for platform, maps and Boxes after dependency restoration (restored-assembly-check.log). Paperclip's frozen pnpm install completed successfully; optional native cpu-features/ssh2 compilation emitted host fchown errors, and binaries for not-yet-built local workspace packages emitted warnings. A full Paperclip typecheck/build/test rerun is not established by this install; earlier server build/typecheck evidence and broader unresolved tests remain as documented.
+
+
+Fresh Paperclip focused NEXT GENT run: **57 passed, 38 skipped**, three files passed and the integration file was skipped (paperclip-launch-focused-recheck.log). The initial focused attempt passed 41 tests but failed to load two files because plugin-sdk dist had not been built. Built the existing plugin SDK and shared package successfully, then the focused run passed with the skips retained. These results supersede any assumption that the previous 79-pass/9-skip focused run was reproduced. Skipped database integration tests remain unproved on this host; no full Paperclip rerun is claimed.
