@@ -10,6 +10,7 @@ import { accessService } from "../services/access.js";
 import { normalizeHumanRole } from "../services/company-member-roles.js";
 import { assertBusinessTokenKeyLoadable, businessTokenJwks, signBusinessToken, type BusinessTokenRole } from "../services/nextgent-business-jwt.js";
 import { nextgentBusinessLinkService } from "../services/nextgent-business-link.js";
+import { deviceStatusSchema, nextgentDeviceService, pairDeviceSchema } from "../services/nextgent-devices.js";
 import { gcrConfigured, readNextgentConfig, type NextgentConfig } from "../services/nextgent-config.js";
 import { gcrClient, upstreamDetails, type FetchLike } from "../services/nextgent-gcr-client.js";
 import {
@@ -102,8 +103,12 @@ async function businessRoleFor(req: Request, db: Db, companyId: string): Promise
   throw forbidden("User does not have access to this company");
 }
 
-/** Linking changes what the whole company is, so only its owners and admins (or an instance admin) may. */
-async function assertCanManageBusinessLink(req: Request, db: Db, companyId: string) {
+/**
+ * Linking changes what the whole company is, and pairing a computer gives it
+ * the company's device token (DECISIONS #70), so only owners and admins (or
+ * an instance admin) may.
+ */
+async function assertCanManageBusinessLink(req: Request, db: Db, companyId: string, refusal = "Only owners and admins can link or unlink the business") {
   assertBoard(req);
   if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) {
     if (!(await companyExists(db, companyId))) throw notFound("Company not found");
@@ -112,7 +117,16 @@ async function assertCanManageBusinessLink(req: Request, db: Db, companyId: stri
   const userId = req.actor.userId;
   const membership = userId ? await accessService(db).getMembership(companyId, "user", userId) : null;
   const role = membership?.status === "active" ? normalizeHumanRole(membership.membershipRole) : null;
-  if (role !== "owner" && role !== "admin") throw forbidden("Only owners and admins can link or unlink the business");
+  if (role !== "owner" && role !== "admin") throw forbidden(refusal);
+}
+
+const DEVICE_REFUSAL = "Only owners and admins can pair or unlink a computer";
+
+/** `online=true|false` narrows the admin list; anything else means both. */
+function onlineFilter(value: unknown): boolean | null {
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
+  return null;
 }
 
 /**
@@ -125,6 +139,7 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
   const links = nextgentBusinessLinkService(db, { config, fetch: options.fetch });
   const inbound = nextgentInboundService(db, { config });
   const gcr = gcrClient({ config, fetch: options.fetch });
+  const devices = nextgentDeviceService(db, { config, fetch: options.fetch });
 
   router.post("/companies/:companyId/business-token", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -237,6 +252,38 @@ export function nextgentRoutes(db: Db, options: NextgentRouteOptions = {}) {
     });
   });
 
+  /** The company's devices (SPEC §5): every member, and the box itself with its device token. */
+  router.get("/companies/:companyId/devices", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    res.json({ devices: await devices.list(companyId), onlineSeconds: config.devices.onlineSeconds });
+  });
+
+  /** Owners and admins approve the code the box shows (DECISIONS #69, #70). */
+  router.post("/companies/:companyId/devices/pair", validate(pairDeviceSchema), async (req, res) => {
+    const companyId = req.params.companyId as string;
+    await assertCanManageBusinessLink(req, db, companyId, DEVICE_REFUSAL);
+    await withUpstreamDetails(res, async () => {
+      res.status(201).json(await devices.pair(companyId, req.body as z.infer<typeof pairDeviceSchema>, req.actor.userId ?? null));
+    });
+  });
+
+  router.delete("/companies/:companyId/devices/:deviceId", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    await assertCanManageBusinessLink(req, db, companyId, DEVICE_REFUSAL);
+    await withUpstreamDetails(res, async () => {
+      res.json(await devices.unlink(companyId, req.params.deviceId as string, req.actor.userId ?? null));
+    });
+  });
+
+  /** Plat-admin's fleet view: linked devices across companies, `companyId` and `online` narrow it. */
+  router.get("/admin/nextgent/devices", async (req, res) => {
+    assertInstanceAdmin(req);
+    const companyId = typeof req.query.companyId === "string" && req.query.companyId ? req.query.companyId : null;
+    if (companyId && !isUuidLike(companyId)) throw notFound("Company not found");
+    res.json({ devices: await devices.listAll({ companyId, online: onlineFilter(req.query.online) }), onlineSeconds: config.devices.onlineSeconds });
+  });
+
   return router;
 }
 
@@ -269,7 +316,7 @@ export function requireNextgentSignature(config: NextgentConfig): RequestHandler
 
 /**
  * Routes mounted outside the session/board guards: the public JWKS, and the
- * two endpoints gcr-api-clean calls, which authenticate by signature only.
+ * endpoints gcr-api-clean calls, which authenticate by signature only.
  * Mount after the JSON parser that captures `req.rawBody`.
  */
 export function nextgentPublicRoutes(db: Db, options: NextgentRouteOptions = {}) {
@@ -280,6 +327,7 @@ export function nextgentPublicRoutes(db: Db, options: NextgentRouteOptions = {})
   // the server here with a clear error rather than at the first token mint.
   if (gcrConfigured(config)) assertBusinessTokenKeyLoadable();
   const inbound = nextgentInboundService(db, { config });
+  const devices = nextgentDeviceService(db, { config, fetch: options.fetch });
   const signed = requireNextgentSignature(config);
 
   router.get("/.well-known/jwks.json", (_req, res) => {
@@ -293,6 +341,11 @@ export function nextgentPublicRoutes(db: Db, options: NextgentRouteOptions = {})
 
   router.post("/api/nextgent/conversations", signed, validate(nextgentConversationSchema), async (req, res) => {
     res.status(201).json(await inbound.recordConversation(req.body));
+  });
+
+  /** The relay heartbeat's state for a computer and its phones (DECISIONS #72, #73). */
+  router.post("/api/nextgent/devices/status", signed, validate(deviceStatusSchema), async (req, res) => {
+    res.json(await devices.applyStatus(req.body));
   });
 
   return router;
