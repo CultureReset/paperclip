@@ -193,6 +193,38 @@ describe("redaction", () => {
     expect(result.normal).toBe("plain");
   });
 
+  it("keeps capability-shaped ids only in the fields a caller names, and still redacts a real JWT there", () => {
+    const jwt =
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    const identifierKeys = ["action", "target", "capability"];
+
+    const kept = sanitizeRecord(
+      { action: "android.sms.send", target: "android.sms.send", capability: "android.sms.send", other: "android.sms.send" },
+      { identifierKeys },
+    );
+    expect(kept.action).toBe("android.sms.send");
+    expect(kept.target).toBe("android.sms.send");
+    expect(kept.capability).toBe("android.sms.send");
+    // The same dotted string in a field nobody vouched for stays fail-closed.
+    expect(kept.other).toBe(REDACTED_EVENT_VALUE);
+
+    const jwtInExemptKeys = sanitizeRecord({ action: jwt, target: jwt, capability: jwt }, { identifierKeys });
+    expect(jwtInExemptKeys.action).toBe(REDACTED_EVENT_VALUE);
+    expect(jwtInExemptKeys.target).toBe(REDACTED_EVENT_VALUE);
+    expect(jwtInExemptKeys.capability).toBe(REDACTED_EVENT_VALUE);
+
+    // Only the capability-id shape passes: lowercase dotted segments, each
+    // starting with a letter. JWT-shaped strings outside that shape stay masked
+    // even in an exempt key.
+    for (const notAnId of ["Android.sms.send", "android.SMS.send", "1android.sms.send", "android.sms.send.AbC1"]) {
+      expect(sanitizeRecord({ action: notAnId }, { identifierKeys }).action, notAnId).toBe(REDACTED_EVENT_VALUE);
+    }
+    expect(sanitizeRecord({ action: "aaa.bbb.ccc" }, { identifierKeys }).action).toBe("aaa.bbb.ccc");
+    expect(sanitizeRecord({ action: "a.b.c.d.e.f" }, { identifierKeys }).action).toBe("a.b.c.d.e.f");
+    // And without the opt-in, nothing changes for callers that never asked.
+    expect(sanitizeRecord({ action: "android.sms.send" }).action).toBe(REDACTED_EVENT_VALUE);
+  });
+
   it("preserves Paperclip protocol schema identifiers", () => {
     expect(
       sanitizeRecord({

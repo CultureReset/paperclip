@@ -51,6 +51,33 @@ const JWT_VALUE_RE =
 // namespace only in fields that actually declare a schema; the same value in
 // arbitrary provider data remains subject to the fail-closed JWT guard.
 const PAPERCLIP_SCHEMA_FIELDS = new Set(["schema", "runtimeSchema"]);
+// Capability and action ids (`android.sms.send`, `gbp.attributes.update`) are
+// public names, not credentials, but 3+ dotted segments trip the JWT guard.
+// A caller may name the fields that hold such ids; only this closed shape
+// passes there — lowercase dotted segments, 2–6 of them, bounded length. A
+// real JWT never fits (base64url headers start `eyJ`, mixed case), and the
+// same string in any other field remains fail-closed.
+const CAPABILITY_ID_RE = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*){1,5}$/;
+const CAPABILITY_ID_MAX_LENGTH = 200;
+
+export interface SanitizeRecordOptions {
+  /** Top-level keys whose string values may be capability-shaped ids. */
+  identifierKeys?: Iterable<string>;
+}
+
+function isDeclaredCapabilityId(
+  identifierKeys: ReadonlySet<string> | null,
+  key: string,
+  value: unknown,
+): value is string {
+  return (
+    identifierKeys !== null &&
+    identifierKeys.has(key) &&
+    typeof value === "string" &&
+    value.length <= CAPABILITY_ID_MAX_LENGTH &&
+    CAPABILITY_ID_RE.test(value)
+  );
+}
 export const PAPERCLIP_PUBLIC_SCHEMA_IDS = new Set([
   "paperclip.artifact.generated.v1",
   "paperclip.artifact.viewed.v1",
@@ -878,7 +905,11 @@ function isPaperclipSchemaDiscriminator(
 
 export function sanitizeRecord(
   record: Record<string, unknown>,
+  options: SanitizeRecordOptions = {},
 ): Record<string, unknown> {
+  const identifierKeys = options.identifierKeys
+    ? new Set(options.identifierKeys)
+    : null;
   const redacted: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) {
     if (COMMAND_ARGS_PAYLOAD_KEY_RE.test(key) && Array.isArray(value)) {
@@ -917,6 +948,10 @@ export function sanitizeRecord(
       continue;
     }
     if (isPaperclipSchemaDiscriminator(key, value)) {
+      redacted[key] = value;
+      continue;
+    }
+    if (isDeclaredCapabilityId(identifierKeys, key, value)) {
       redacted[key] = value;
       continue;
     }

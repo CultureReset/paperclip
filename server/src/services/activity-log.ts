@@ -63,6 +63,8 @@ export interface LogActivityInput {
   agentApiKeyId?: string | null;
   issueId?: string | null;
   details?: Record<string, unknown> | null;
+  /** Keys of `details` whose values are capability/action ids (`android.sms.send`), kept rather than mistaken for JWTs. */
+  detailsIdentifierKeys?: readonly string[];
   responsibleUserIdOverride?: string | null;
 }
 
@@ -76,14 +78,14 @@ export async function createActivityDetailsRedactor(db: Db) {
   const currentUserRedactionOptions = {
     enabled: (await instanceSettingsService(db).getGeneral()).censorUsernameInLogs,
   };
-  return (details: Record<string, unknown> | null) => (
-    details ? redactCurrentUserValue(sanitizeRecord(details), currentUserRedactionOptions) : null
+  return (details: Record<string, unknown> | null, identifierKeys?: readonly string[]) => (
+    details ? redactCurrentUserValue(sanitizeRecord(details, { identifierKeys }), currentUserRedactionOptions) : null
   );
 }
 
-export async function redactActivityDetails(db: Db, details: Record<string, unknown> | null) {
+export async function redactActivityDetails(db: Db, details: Record<string, unknown> | null, identifierKeys?: readonly string[]) {
   if (!details) return null;
-  return (await createActivityDetailsRedactor(db))(details);
+  return (await createActivityDetailsRedactor(db))(details, identifierKeys);
 }
 
 function readNonEmptyString(value: unknown) {
@@ -158,7 +160,7 @@ export function publishActivity(publication: ActivityPublication) {
 }
 
 export async function persistActivity(db: Db, input: LogActivityInput) {
-  const redactedDetails = await redactActivityDetails(db, input.details ?? null);
+  const redactedDetails = await redactActivityDetails(db, input.details ?? null, input.detailsIdentifierKeys);
   const responsibleUserId = await resolveResponsibleUserIdForActivity(db, input);
   const [activity] = await db.insert(activityLog).values({
     companyId: input.companyId,

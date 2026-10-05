@@ -72,6 +72,14 @@ export function conversationReference(conversation: NextgentConversation) {
 /** Activity action receipts are stored under. */
 export const RECEIPT_ACTION = "nextgent.receipt";
 
+/**
+ * Fields that hold capability or action ids (`android.sms.send`). Three dotted
+ * segments look like a JWT to the activity redactor, which would store
+ * `***REDACTED***`; naming the fields lets ids of that exact shape through.
+ */
+const RECEIPT_IDENTIFIER_KEYS = ["action", "target", "capability"] as const;
+const CONVERSATION_IDENTIFIER_KEYS = ["mode", "outcome"] as const;
+
 /** The conversations endpoint accepts this literal in place of a company id: NEXT GENT's own company. */
 export const NEXTGENT_PLATFORM_COMPANY_ALIAS = "nextgent";
 
@@ -177,6 +185,7 @@ export function nextgentInboundService(db: Db, options: { config?: NextgentConfi
         entityId: task?.id ?? id,
         issueId: task?.id ?? null,
         details: { receiptId: id, ...details },
+        detailsIdentifierKeys: RECEIPT_IDENTIFIER_KEYS,
       });
       if (task) {
         const body = [
@@ -218,6 +227,7 @@ export function nextgentInboundService(db: Db, options: { config?: NextgentConfi
         entityType: "nextgent_conversation",
         entityId: id,
         details: conversationReference(conversation),
+        detailsIdentifierKeys: CONVERSATION_IDENTIFIER_KEYS,
       });
       return { id };
     },

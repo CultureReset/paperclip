@@ -1243,6 +1243,31 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
     });
   });
 
+  it("keeps dotted capability ids on a receipt instead of masking them as JWTs (android.sms.send)", async () => {
+    const companyId = await seedCompany("DOT");
+    const inbound = nextgentInboundService(db, { config: configWith() });
+    const [issue] = await db.insert(issues).values({ companyId, title: "Text the customer", identifier: "DOT-1" } as never).returning();
+    await inbound.recordReceipt({
+      companyId,
+      taskId: "DOT-1",
+      action: "android.sms.send",
+      target: "android.sms.send",
+      capability: "android.sms.send",
+      verified: true,
+      at: "2026-10-05T09:00:00Z",
+    });
+    const listed = await inbound.listReceipts(companyId, { limit: 10, offset: 0 });
+    expect(listed.receipts[0]).toMatchObject({ action: "android.sms.send", target: "android.sms.send", capability: "android.sms.send", taskId: issue.id });
+    const [row] = await db.select().from(activityLog).where(and(eq(activityLog.companyId, companyId), eq(activityLog.action, "nextgent.receipt")));
+    expect(row.details).toMatchObject({ action: "android.sms.send", target: "android.sms.send", capability: "android.sms.send" });
+
+    // A bearer token smuggled into those same fields is still masked.
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    await inbound.recordReceipt({ companyId, action: jwt, target: jwt, capability: jwt, verified: false, at: "2026-10-05T09:01:00Z" });
+    const again = await inbound.listReceipts(companyId, { limit: 1, offset: 0 });
+    expect(again.receipts[0]).toMatchObject({ action: "***REDACTED***", target: "***REDACTED***", capability: "***REDACTED***" });
+  });
+
   it("stores a receipt whose target is empty, keeping the capability it names (DECISIONS #79)", async () => {
     const companyId = await seedCompany("TGT");
     const inbound = nextgentInboundService(db, { config: configWith() });
