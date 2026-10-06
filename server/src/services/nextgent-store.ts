@@ -326,10 +326,11 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
       permissions: string[];
     }) {
       const section = nextgentSectionOf(input.version.payload);
+      const nativeAutomation = input.item.kind === "automation" && automationOf(input.version.payload) !== null;
       // An app or a layout is registered even without a section: gcr-api-clean
       // keeps its projection (the manifest, the switch) for the business's page.
       const projected = isProjectedKind(input.item.kind);
-      const registered = section !== null || projected;
+      const registered = section !== null || projected || nativeAutomation;
       const permissions = sorted(input.permissions);
       const optionalGranted = optionalPermissionsOf(section).filter((permission) => permissions.includes(permission));
       await db
@@ -341,7 +342,7 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
         warnSkipped("install registration", { companyId: input.install.companyId, itemKey: input.item.key });
         return null;
       }
-      const kind = section?.kind ?? (input.item.kind as "app" | "layout");
+      const kind = nativeAutomation ? "automation" : section?.kind ?? (input.item.kind as "app" | "layout");
       // An automation that carries its definition runs on this server's step
       // runner; its agent step hands work over in-process (DECISIONS #82), so
       // no hand-off webhook is created for it. Older releases keep the webhook.
@@ -355,6 +356,7 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
         kind,
         version: input.version.version,
         permissions,
+        ...(nativeAutomation ? { executionOwner: "paperclip" as const } : {}),
         // Which of those the owner could have declined; gcr-api-clean may ignore it.
         optionalPermissions: optionalGranted,
         ...(routine ? { routine } : {}),
@@ -387,6 +389,11 @@ export function nextgentStoreBridge(db: Db, options: { config?: NextgentConfig; 
      * layout), so the projection follows the release. Nothing to tell for an install it never got.
      */
     async moveVersion(item: ItemRow, install: InstallRow, version: VersionRow) {
+      if (item.kind === "automation" && automationOf(version.payload)) {
+        // A legacy-to-native update must claim the executor even when its
+        // permissions did not change. GCR refuses unreconciled legacy state.
+        return this.activate({ item, install, version, userId: null, firstActivation: false, permissions: install.approvedPermissions ?? [] });
+      }
       if (!registeredUpstream(install)) return null;
       if (!gcr.configured) {
         warnSkipped("install version update", { companyId: install.companyId, installId: install.id });

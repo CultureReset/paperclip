@@ -1,0 +1,118 @@
+{
+  "project": "Saas",
+  "project_id": "mtjxlyncokedaduvzgmp",
+  "baseline": {
+    "idx": 284,
+    "version": "7",
+    "when": 1790439010225,
+    "tag": "0284_petite_genesis",
+    "breakpoints": true
+  },
+  "baseline_hash": "732d8a8cfcc78810b6dfb1da0a3bf9ac5add2b8219e22d14c139633b66bdbe79",
+  "pending": [
+    {
+      "idx": 285,
+      "version": "7",
+      "when": 1791112615247,
+      "tag": "0285_fat_phalanx",
+      "breakpoints": true
+    },
+    {
+      "idx": 286,
+      "version": "7",
+      "when": 1791113894641,
+      "tag": "0286_nebulous_hobgoblin",
+      "breakpoints": true
+    },
+    {
+      "idx": 287,
+      "version": "7",
+      "when": 1791114759839,
+      "tag": "0287_careless_winter_soldier",
+      "breakpoints": true
+    },
+    {
+      "idx": 288,
+      "version": "7",
+      "when": 1791115257461,
+      "tag": "0288_chubby_doctor_doom",
+      "breakpoints": true
+    },
+    {
+      "idx": 289,
+      "version": "7",
+      "when": 1791142860634,
+      "tag": "0289_ambitious_kitty_pryde",
+      "breakpoints": true
+    },
+    {
+      "idx": 290,
+      "version": "7",
+      "when": 1791144467472,
+      "tag": "0290_outgoing_ronan",
+      "breakpoints": true
+    },
+    {
+      "idx": 291,
+      "version": "7",
+      "when": 1791149542497,
+      "tag": "0291_secret_omega_sentinel",
+      "breakpoints": true
+    },
+    {
+      "idx": 292,
+      "version": "7",
+      "when": 1791157696153,
+      "tag": "0292_store_item_kinds_layout",
+      "breakpoints": true
+    },
+    {
+      "idx": 293,
+      "version": "7",
+      "when": 1791161278046,
+      "tag": "0293_nextgent_business_links_archive_business_facts",
+      "breakpoints": true
+    },
+    {
+      "idx": 294,
+      "version": "7",
+      "when": 1791168481601,
+      "tag": "0294_nextgent_devices",
+      "breakpoints": true
+    },
+    {
+      "idx": 295,
+      "version": "7",
+      "when": 1791168619812,
+      "tag": "0295_automation_runner_entitlement_notify",
+      "breakpoints": true
+    }
+  ],
+  "created_tables": [
+    "store_installs",
+    "store_item_versions",
+    "store_items",
+    "store_install_resources",
+    "store_settings",
+    "nextgent_business_links",
+    "store_deployments",
+    "nextgent_business_links_archive_0293",
+    "nextgent_devices",
+    "routine_run_steps",
+    "routine_waits",
+    "company_plans",
+    "notification_log",
+    "notification_settings",
+    "store_grants",
+    "store_plan_items",
+    "store_plans"
+  ],
+  "sql_sha256": "1245088da210e2583d3bd821bd0a1abe0a02762df87da081ea5c6047d6a62f0c",
+  "status": "applied_verified",
+  "migration_version": "20261006185950",
+  "migration_name": "nextgent_existing_platform_extensions",
+  "last_drizzle_hash": "1e3d401b8105648394a8ade72f170168475aae97aaa6d52412ad88aec45d92ae",
+  "new_tables_rls": true,
+  "browser_select": false,
+  "server_select": true
+}

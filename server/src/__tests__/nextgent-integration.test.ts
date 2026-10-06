@@ -533,6 +533,46 @@ describeEmbeddedPostgres("NEXT GENT wiring", () => {
       expect(calls.filter((call) => call.method === "POST").at(-1)?.body).toMatchObject({ version: "2.0.0", permissions: ["availability:read", "bookings:write"] });
     });
 
+    it("registers a native automation's token and executor before enabling its routine", async () => {
+      const companyId = await seedCompany("NATIVE");
+      const { calls, fetch } = fakeUpstream({
+        "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
+        "POST /api/nextgent/installs": () => ({ body: { token: "native-scoped-token" } }),
+        "DELETE /api/nextgent/installs/:id": () => ({ body: {} }),
+      });
+      const bridge = nextgentStoreBridge(db, { config: configWith(), fetch });
+      let registered = false;
+      const originalActivate = bridge.activate.bind(bridge);
+      bridge.activate = async (input) => {
+        expect(await db.select().from(routines).where(eq(routines.companyId, companyId))).toHaveLength(0);
+        const answer = await originalActivate(input);
+        registered = true;
+        return answer;
+      };
+      const store = storeService(db, { bridge });
+      const payload = { automation: { name: "Native review", trigger: { type: "manual" }, steps: [{ id: "note", type: "log", config: { message: "Ready" } }] } };
+      const item = await publish(store, "native-review", "automation", payload);
+      const installed = await store.install(companyId, item.id, null);
+      expect(registered).toBe(true);
+      expect(calls.find((call) => call.method === "POST")?.body).toMatchObject({ kind: "automation", executionOwner: "paperclip", installId: installed.id });
+      expect((await db.select().from(routines).where(eq(routines.companyId, companyId)))[0]).toMatchObject({ status: "active", mode: "steps" });
+      expect(installed.tokenSecretId).toBeTruthy();
+    });
+
+    it("does not start a native routine when GCR refuses unreconciled legacy execution", async () => {
+      const companyId = await seedCompany("NREF");
+      const { fetch } = fakeUpstream({
+        "GET /api/nextgent/entitlement": () => ({ body: { allowed: true } }),
+        "POST /api/nextgent/installs": () => ({ status: 409, body: { error: "Reconcile legacy waits", code: "automation_handoff_required" } }),
+        "DELETE /api/nextgent/installs/:id": () => ({ body: {} }),
+      });
+      const store = storeService(db, { bridge: nextgentStoreBridge(db, { config: configWith(), fetch }) });
+      const item = await publish(store, "refused-native", "automation", { automation: { name: "Refused", trigger: { type: "manual" }, steps: [{ id: "note", type: "log", config: { message: "Ready" } }] } });
+      await expect(store.install(companyId, item.id, null)).rejects.toMatchObject({ status: 409 });
+      expect(await db.select().from(routines).where(and(eq(routines.companyId, companyId), eq(routines.status, "active")))).toHaveLength(0);
+      expect(await db.select().from(storeInstalls).where(eq(storeInstalls.companyId, companyId))).toHaveLength(0);
+    });
+
     it("gives an automation's hand-off its agent's routine with an HMAC webhook", async () => {
       const companyId = await seedCompany("AUTO");
       const { calls, fetch } = fakeUpstream({

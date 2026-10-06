@@ -166,8 +166,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
     try {
       await content.sync(install.companyId, item, version.payload, userId, install.id);
       // An automation's "steps" routine, definition pinned to this release (DECISIONS #82).
-      if (item.kind === "automation") await automations.install({ companyId: install.companyId, item, version, userId, enabled: true, installId: install.id });
-      return await bridge.activate({
+      const result = await bridge.activate({
         item,
         install,
         version,
@@ -175,7 +174,12 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         firstActivation: true,
         permissions: initialGrant(nextgentSectionOf(version.payload), declined),
       });
+      // Register ownership and the scoped business token before any trigger
+      // can execute. A refused handoff must never leave an active routine.
+      if (item.kind === "automation") await automations.install({ companyId: install.companyId, item, version, userId, enabled: true, installId: install.id });
+      return result;
     } catch (err) {
+      if (item.kind === "automation") await automations.disable(install.companyId, item, userId).catch(() => undefined);
       const current = await db.select().from(storeInstalls).where(eq(storeInstalls.id, install.id)).then((rows) => rows[0] ?? null);
       if (current) await bridge.deactivate(current).then((finish) => finish()).catch(() => undefined);
       await content.remove(install.companyId, item, userId).catch(() => undefined);
@@ -218,7 +222,6 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
   async function moveInstall(item: StoreItemRow, install: StoreInstallRow, version: StoreVersionRow, userId: string | null) {
     // A switched-off install only records the release; it is created when turned on.
     if (install.enabled) await content.sync(install.companyId, item, version.payload, userId, install.id);
-    if (install.enabled && item.kind === "automation") await automations.install({ companyId: install.companyId, item, version, userId, enabled: true, installId: install.id });
     const [updated] = await db
       .update(storeInstalls)
       .set({ versionId: version.id, updatedAt: new Date() })
@@ -235,6 +238,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         // Same scope: gcr-api-clean still learns the version and the manifest it carries.
         await bridge.moveVersion(item, updated, version);
       }
+      if (item.kind === "automation") await automations.install({ companyId: install.companyId, item, version, userId, enabled: true, installId: install.id });
     } catch (err) {
       // gcr-api-clean kept the old scope (or the old version), so this side
       // goes back to the old release too: version, grants and content. The
@@ -257,6 +261,7 @@ export function storeService(db: Db, options: { bridge?: NextgentStoreBridge; de
         ? await db.select().from(storeItemVersions).where(eq(storeItemVersions.id, install.versionId)).then((rows) => rows[0] ?? null)
         : null;
       if (previous) await content.sync(install.companyId, item, previous.payload, userId, install.id);
+      if (previous && item.kind === "automation") await automations.install({ companyId: install.companyId, item, version: previous, userId, enabled: install.enabled, installId: install.id });
     } catch (rollbackError) {
       logger.error({ err: rollbackError, installId: install.id, itemKey: item.key }, "Could not roll a store update back after gcr-api-clean refused it");
     }

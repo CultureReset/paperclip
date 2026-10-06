@@ -3,6 +3,7 @@
 Every repo implements its side of this exactly. If you must change something here, stop and report it instead of inventing a different shape. The plan is `NEXT-GENT-plan-final.md` in the same folder; read sections 2, 5, 6, 7, 8, 9, 10 and 15 before coding.
 
 ## Names
+- Current owner instructions and `SPEC.md` supersede this historical contract's branch and deployment restrictions. The integration branch is `codex/nextgent-integration-20261005`; authorized launch migrations are recorded in `nextgent-assembly/VALIDATION.md`. Do not attribute Codex commits to Claude.
 - Paperclip = control plane (repo `paperclip`). gcr-api-clean = business data (repo `gcr-api-clean`). Play-user = owner app. Plat-admin = admin console.
 - A Paperclip company = one business. Link: `company_links(company_id text primary key, entity_slug text unique not null, linked_at timestamptz default now(), linked_by text)` in the cyber check database (gcr-api-clean owns it).
 
@@ -50,6 +51,8 @@ Every repo implements its side of this exactly. If you must change something her
 - If LiteLLM env is absent, fall back to the existing single key and log a warning (dev only).
 
 ## 9. Automations
+- Native Store releases with `payload.automation` execute only in Paperclip. Signed `POST /api/nextgent/installs` includes `executionOwner: "paperclip"`; GCR records that owner and issues the scoped business token without installing a legacy definition. Registration completes before the native routine is enabled. Native registration needs no duplicate GCR catalog entry, and semantic versions remain Paperclip versions.
+- Omitting `executionOwner` preserves legacy GCR execution. Existing legacy installs, active runs, or pending waits block native takeover with `automation_handoff_required`; neither their settings nor their execution history is discarded. Database guards serialize native/legacy claims for the same business and item key and reject a subsequent legacy rollout while a native claim is active. GCR remains the business data and billing service.
 - New step types in `lib/automationEngine.js`: `wait` (`{ minutes }`, persisted in `automation_waits(run_id, step_index, due_at, state)`, resumed by the existing scheduled check), `agent` (POST to the install's stored routine webhook, HMAC per Paperclip `hmac_sha256` signing), `message` (uses messages.send).
 - Events fired: `booking.created`, `booking.changed`, `booking.cancelled`, `booking.completed` (scheduled check: end time passed, not cancelled), `payment.received`, `review.received`, `intake.created`.
 

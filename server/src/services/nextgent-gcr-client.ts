@@ -40,6 +40,8 @@ export interface GcrInstallRequest {
   kind: NextgentInstallKind;
   version: string;
   permissions: string[];
+  /** The executor, distinct from GCR's business-data/token projection. */
+  executionOwner?: "gcr" | "paperclip";
   /** The optional ones among `permissions` (granted, could have been declined). Not in contract §4. */
   optionalPermissions?: string[];
   routine?: { webhookUrl: string; webhookSecret: string };

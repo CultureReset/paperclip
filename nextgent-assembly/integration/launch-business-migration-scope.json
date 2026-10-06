@@ -1,0 +1,25 @@
+{
+  "project": "cyber check",
+  "project_id": "mkepugvdlktfsossumox",
+  "status": "applied_verified",
+  "migrations": [
+    {
+      "version": "20261006191401",
+      "name": "nextgent_automation_execution_ownership"
+    },
+    {
+      "version": "20261006192633",
+      "name": "nextgent_existing_business_runtime"
+    },
+    {
+      "version": "20261006192821",
+      "name": "nextgent_existing_unified_claim_codes"
+    }
+  ],
+  "business_runtime_sql_sha256": "bc3ee402825f289a75a728616376cf5849b8ce50853e8285222df0ef33fa16ef",
+  "new_runtime_tables_rls": true,
+  "browser_select": false,
+  "service_role_select": true,
+  "claim_codes_code_hash_nullable": true,
+  "customer_charges_performed": false
+}

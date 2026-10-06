@@ -12,7 +12,7 @@
   {
     "repository": "CultureReset/nextgent-platform",
     "directory": "nextgent-platform-main",
-    "commit": "b06b60f22481683e8b6be7e52074ffd4ac286c38"
+    "commit": "8cb6af5ef5656e3759d1819d7919795dc6495e4d"
   },
   {
     "repository": "CultureReset/nextgent-maps",
@@ -22,12 +22,12 @@
   {
     "repository": "CultureReset/gcr-api-clean",
     "directory": "gcr-api-clean",
-    "commit": "7a62a4fa225d067076a2c9b090bcadf6ff681ec5"
+    "commit": "4375aeee45805c6e832d22859bff38b2e0c406b4"
   },
   {
     "repository": "CultureReset/Play-user",
     "directory": "Play-user-main",
-    "commit": "ad84bf2c37f4c00683a0330715551d4a72f0c5cc"
+    "commit": "eb60f76b20a8f06ba629beb0fd1aabeb60aa4536"
   },
   {
     "repository": "CultureReset/nextgent-openjarvis",
