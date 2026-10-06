@@ -2,7 +2,7 @@
 
 Target: Supabase **cyber check**, project **mkepugvdlktfsossumox**.
 
-Status: **not applied**. Automatic approval review rejected the exact batch because production DDL, RLS changes and service-role grants were not specifically approved. No retry through another execution path was attempted.
+Status: **applied after explicit user approval**. Migration `20261005235926_nextgent_existing_core_assembly` succeeded on cyber check. The unchanged SQL SHA-256 below was checked before application. All ten new tables have RLS enabled, anon/authenticated SELECT revoked and service-role SELECT/INSERT/UPDATE/DELETE granted. Company/admin identity, relay idempotency, node registry and app projection columns were verified. The earlier automatic-review rejection was resolved by the user approving this exact scope.
 
 This file is the exact attempted batch, assembled from existing GCR migrations, plus explicit server-role grants. It adds business/company links and credentials, node pairing and request tracking, app-install projections, owner notifications and app data tables. It enables RLS/revokes browser-role access on new server-owned tables and grants service_role access. Existing tables receive columns/indexes. It is not the separate Stripe billing migration batch and does not finish all launch migrations.
 

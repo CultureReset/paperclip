@@ -127,7 +127,7 @@ GitHub integration branches contain the repaired code in eight repositories. rep
 
 Plat-admin and Play-user remain canonical. Admin-dashboard-main and Dashboards-users- are active legacy repositories, not assumed retired. Direct source/tree comparison found substantial shared code, but legacy store, Ghost and automation paths still need behavior reconciliation; preserve reusable functionality and do not enable a second automation dispatcher. Their production homepage metadata does not prove current deployed behavior. See VALIDATION.md and logs/*-fold-comparison.json.
 
-The core Supabase migration is staged, not deployed; exact scope is in MIGRATION_SCOPE.md.
+The core Supabase migration was explicitly approved and applied as 20261005235926_nextgent_existing_core_assembly; exact scope and verification are in MIGRATION_SCOPE.md.
 
 
 The existing legacy Ghost fleet screen has now been folded into Plat-admin at /platform/ghost, sharing canonical admin authentication and existing GCR endpoints. Its legacy Store/automation counterparts still require reconciliation.

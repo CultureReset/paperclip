@@ -139,3 +139,13 @@ The repaired assembly runner passed every configured check for platform, maps an
 
 
 Fresh Paperclip focused NEXT GENT run: **57 passed, 38 skipped**, three files passed and the integration file was skipped (paperclip-launch-focused-recheck.log). The initial focused attempt passed 41 tests but failed to load two files because plugin-sdk dist had not been built. Built the existing plugin SDK and shared package successfully, then the focused run passed with the skips retained. These results supersede any assumption that the previous 79-pass/9-skip focused run was reproduced. Skipped database integration tests remain unproved on this host; no full Paperclip rerun is claimed.
+
+
+## Approved core production migration — 2026-10-05 America/Chicago
+
+After explicit approval of the exact scope, migration `20261005235926_nextgent_existing_core_assembly` applied successfully to cyber check (mkepugvdlktfsossumox). Applied SQL SHA-256: 0c0e3f1343bceb6c563d06b9667e1483c70f0245f28d5f7c11956208f1345239. Supabase migration history confirms the record. All ten newly created server-owned tables have RLS enabled, no anon/authenticated SELECT privilege, and service-role CRUD access. Existing admin identity, relay idempotency, node registry and app install projection columns were verified. Earlier statements that no migration was applied describe historical checkpoints and are superseded by this section.
+
+The separate existing Stripe billing batch is prepared for review, not applied. Live preflight confirms prerequisite tables and exactly one default plan with currency, but the four billing additions and Stripe columns are absent. See nextgent-billing-migration.sql and BILLING_MIGRATION_SCOPE.md. No customer charges, provider configuration or account provisioning occurred.
+
+
+Billing fixture check: **14 passed** (billing-preflight-tests.log), covering grace period, limits and restriction without a real database or Stripe. Applying the separately prepared billing batch was rejected by automatic approval review because this exact production schema/permissions/price-fold scope was not explicitly approved. No billing mutation occurred. The core migration remains successfully applied.
