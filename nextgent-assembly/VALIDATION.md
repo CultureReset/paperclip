@@ -149,3 +149,14 @@ The separate existing Stripe billing batch is prepared for review, not applied. 
 
 
 Billing fixture check: **14 passed** (billing-preflight-tests.log), covering grace period, limits and restriction without a real database or Stripe. Applying the separately prepared billing batch was rejected by automatic approval review because this exact production schema/permissions/price-fold scope was not explicitly approved. No billing mutation occurred. The core migration remains successfully applied.
+
+
+## Approved billing and updateable map helpers — 2026-10-06 UTC
+
+The owner approved the exact prepared billing scope. Migration `20261006000941_nextgent_existing_stripe_billing` applied successfully to cyber check (mkepugvdlktfsossumox), using unchanged SQL SHA-256 8b339a239e50edc60fb236bc57c29614827909697351499136c0761775ffd0d0. Production history confirms the record. All four new tables have RLS on, browser SELECT denied and service-role CRUD granted; all eight expected columns exist. The legacy paid-price fold left zero paid items without canonical prices. This supersedes historical billing-blocked statements above. No customer charge, Stripe product, provider configuration or founder account was created.
+
+Platform **102 tests pass**, touched Python files pass Ruff, maps **6 tests pass**, and both catalog maps pass validation. Python/Bash files can now ship in versioned signed map bundles and select one existing cursor action using JSON stdin/stdout. Source paths are pinned to the loaded map directory; traversal/missing scripts, nonzero exit, timeout, invalid output and nested helpers fail. Actual screen state is checked after the action, so script success does not replace verification. These are trusted admin programs, not sandboxed untrusted code. The scripts do not receive an unrestricted ADB endpoint. Hardware acceptance remains required.
+
+Remaining: live deployed Stripe checkout/subscription/invoice/webhook replay and paid installation; deployed backend/UI and separate Paperclip Postgres; founder owner/admin workspace and live Jarvis/Hermes/OpenClaw workers; legacy feature reconciliation and one Paperclip automation dispatch owner; real paired-box signed update and physical Android approval/verification/receipt acceptance; outstanding broader Paperclip failures/skips and operational reconciliation. Other SQL migrations still require review; core plus billing is not proof that every launch migration is present.
+
+Relay/Jarvis handoff rerun after the helper change: **2 passed** (helper-handoffs.log). The first command used the wrong Python import path and failed collection; rerunning from the platform directory with its existing src/test imports resolved collection. This is real loopback integration with fixture cloud services and a durable failed-phone receipt, not real hardware or deployed worker acceptance.

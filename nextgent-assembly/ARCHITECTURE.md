@@ -92,7 +92,7 @@ Paperclip's continued route audit adds its existing 33 mounted NEXT GENT operati
 
 ## Accepted launch scope — 2026-10-05
 
-The owner confirmed: finish the existing Stripe billing; launch the business software and physical Android system together as one hybrid product; App Maps are independently publishable/updateable assets managed through the admin dashboard, not hardcoded runtime workflows. Map bundles may require Python/Bash helpers; the inspected current runner executes declarative map transitions, not arbitrary uploaded scripts. Packaging/executor compatibility needs explicit implementation without replacing the existing verifier or policy.
+The owner confirmed: finish the existing Stripe billing; launch the business software and physical Android system together as one hybrid product; App Maps are independently publishable/updateable assets managed through the admin dashboard, not hardcoded runtime workflows. Map bundles now support declared Python/Bash helper files. They receive JSON parameters/UI observations and return one existing cursor action; the map runner then checks its declared destination. Signed pinned map delivery uses the existing admin/updater pipeline. Helpers are trusted admin code; the policy, owner approval and verifier/receipt flow remain in place. Real-phone acceptance is still required.
 
 NEXT GENT itself must be the first full business deployment. The founder needs normal business access and platform-admin access, with the full business apps, automations, Jarvis, Hermes and OpenClaw configuration. It uses the same business installation/task/receipt paths sold to customers, with platform publishing and management available through administrator access. No live account or worker credentials have been provisioned here.
 
@@ -131,3 +131,5 @@ The core Supabase migration was explicitly approved and applied as 2026100523592
 
 
 The existing legacy Ghost fleet screen has now been folded into Plat-admin at /platform/ghost, sharing canonical admin authentication and existing GCR endpoints. Its legacy Store/automation counterparts still require reconciliation.
+
+Billing schema is live: approved migration 20261006000941_nextgent_existing_stripe_billing applied to cyber check and its RLS, privileges, columns and legacy price fold were verified. Paid checkout and deployed provider configuration remain unproved.

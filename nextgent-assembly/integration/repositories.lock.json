@@ -12,12 +12,12 @@
   {
     "repository": "CultureReset/nextgent-platform",
     "directory": "nextgent-platform-main",
-    "commit": "a3106c77635330ca266fb5ea6ac5b8e67ddbbfcd"
+    "commit": "b06b60f22481683e8b6be7e52074ffd4ac286c38"
   },
   {
     "repository": "CultureReset/nextgent-maps",
     "directory": "nextgent-maps-main",
-    "commit": "9637e5eec9bf1fb44d167e4dd5ac2c7be23a8e72"
+    "commit": "bc8f810610aec14e5c6e08afd18c49e1953190c6"
   },
   {
     "repository": "CultureReset/gcr-api-clean",
