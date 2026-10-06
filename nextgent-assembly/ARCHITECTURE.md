@@ -133,3 +133,5 @@ The core Supabase migration was explicitly approved and applied as 2026100523592
 The existing legacy Ghost fleet screen has now been folded into Plat-admin at /platform/ghost, sharing canonical admin authentication and existing GCR endpoints. Its legacy Store/automation counterparts still require reconciliation.
 
 Billing schema is live: approved migration 20261006000941_nextgent_existing_stripe_billing applied to cyber check and its RLS, privileges, columns and legacy price fold were verified. Paid checkout and deployed provider configuration remain unproved.
+
+Standalone nightly reports now use existing Paperclip routines/scheduler; n8n is retained only to deactivate and reconcile old matching schedules. Canonical Paperclip store bindings prevent an additional standalone routine. GCR’s legacy automation install/run paths still require the separate execution-owner handoff; their features and wait history must be preserved during migration.
