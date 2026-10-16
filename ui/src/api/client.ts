@@ -1,7 +1,8 @@
 import { getPageVisibility, getVisibilityHeaderValue } from "@/lib/page-visibility";
 import { tenantSessionRecovery } from "@/lib/tenant-session-recovery";
 
-const BASE = "/api";
+// Allow override via env for deployments where API is on a different origin
+const BASE = (import.meta.env.VITE_API_BASE as string | undefined) || "/api";
 
 export class ApiError extends Error {
   status: number;
